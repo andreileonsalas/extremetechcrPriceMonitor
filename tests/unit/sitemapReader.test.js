@@ -79,8 +79,8 @@ describe('sitemapReader', () => {
   describe('delay', () => {
     test('resolves after approximately the specified time', async () => {
       const start = Date.now();
-      await delay(50);
-      expect(Date.now() - start).toBeGreaterThanOrEqual(40);
+      await delay(100);
+      expect(Date.now() - start).toBeGreaterThanOrEqual(90);
     });
   });
 });

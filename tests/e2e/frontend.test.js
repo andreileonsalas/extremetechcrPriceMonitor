@@ -228,30 +228,14 @@ test.describe('Required Products - Specific Test Cases', () => {
     await expect(page.locator('#loadingState')).toBeHidden({ timeout: 15000 });
   });
 
-  test('REQUIRED: Laptop product is visible in the UI', async ({ page }) => {
-    await page.fill('#searchInput', 'Laptop');
-    await page.waitForTimeout(400);
-    const cards = page.locator('.product-card');
-    await expect(cards.first()).toBeVisible();
-    const title = await cards.first().locator('.card-title').textContent();
-    expect(title.toLowerCase()).toContain('laptop');
-  });
-
-  test('REQUIRED: Mouse product is visible in the UI', async ({ page }) => {
-    await page.fill('#searchInput', 'Mouse');
-    await page.waitForTimeout(400);
-    const cards = page.locator('.product-card');
-    await expect(cards.first()).toBeVisible();
-    const title = await cards.first().locator('.card-title').textContent();
-    expect(title.toLowerCase()).toContain('mouse');
-  });
-
-  test('REQUIRED: Monitor product is visible in the UI', async ({ page }) => {
-    await page.fill('#searchInput', 'Monitor');
-    await page.waitForTimeout(400);
-    const cards = page.locator('.product-card');
-    await expect(cards.first()).toBeVisible();
-    const title = await cards.first().locator('.card-title').textContent();
-    expect(title.toLowerCase()).toContain('monitor');
-  });
+  for (const product of REQUIRED_PRODUCTS) {
+    test(`REQUIRED: ${product.name} product is visible in the UI`, async ({ page }) => {
+      await page.fill('#searchInput', product.name);
+      await page.waitForTimeout(400);
+      const cards = page.locator('.product-card');
+      await expect(cards.first()).toBeVisible();
+      const title = await cards.first().locator('.card-title').textContent();
+      expect(title.toLowerCase()).toContain(product.name.toLowerCase());
+    });
+  }
 });
