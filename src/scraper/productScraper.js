@@ -7,6 +7,10 @@ const {
   REQUEST_TIMEOUT_MS,
   SELECTOR_PRODUCT_TITLE,
   SELECTOR_PRODUCT_PRICE,
+  SELECTOR_PRODUCT_SALE_PRICE,
+  SELECTOR_PRODUCT_ORIGINAL_PRICE,
+  SELECTOR_DISCOUNT_BADGE,
+  STOCK_LOCATION_SELECTORS,
   SELECTOR_PRODUCT_SKU,
   SELECTOR_PRODUCT_CATEGORY,
   SELECTOR_PRODUCT_IMAGE,
@@ -14,23 +18,32 @@ const {
 } = require('../config');
 
 /**
+ * @typedef {Object} StockLocation
+ * @property {string} location - Store/warehouse name.
+ * @property {number} quantity - Available units at that location.
+ */
+
+/**
  * @typedef {Object} ProductData
  * @property {string} url - The product URL.
  * @property {string|null} name - The product name.
- * @property {number|null} price - The numeric price (null if unavailable).
- * @property {string|null} currency - The currency string (e.g. "CRC", "$").
+ * @property {number|null} price - The active (sale) price, or regular price if no sale.
+ * @property {number|null} originalPrice - The original price before discount (null when not on sale).
+ * @property {number|null} discountPercentage - Discount percentage (null when not on sale).
+ * @property {string|null} currency - The currency string (e.g. "CRC", "USD").
  * @property {string|null} sku - The product SKU.
  * @property {string|null} category - The product category.
  * @property {string|null} imageUrl - URL of the main product image.
  * @property {string|null} description - Short product description.
- * @property {boolean} isAvailable - Whether the product is in stock.
+ * @property {StockLocation[]} stockLocations - Per-store stock availability.
+ * @property {boolean} isAvailable - Whether the product is in stock anywhere.
  * @property {boolean} isProduct - Whether the page appears to be a product page.
  * @property {number} statusCode - HTTP status code returned.
  */
 
 /**
- * Fetches and parses a product page, extracting structured product data.
- * Returns null if the page returns a 404 or cannot be parsed as a product.
+ * Fetches a product page URL and passes the HTML to scrapeProductFromHtml.
+ * Returns a ProductData object with all fields set to null/false on failure.
  * @param {string} url - The product page URL to scrape.
  * @returns {Promise<ProductData>} Scraped product data.
  */
@@ -48,75 +61,83 @@ async function scrapeProduct(url) {
     html = response.data;
   } catch (err) {
     console.error(`Request failed for ${url}: ${err.message}`);
-    return {
-      url,
-      name: null,
-      price: null,
-      currency: null,
-      sku: null,
-      category: null,
-      imageUrl: null,
-      description: null,
-      isAvailable: false,
-      isProduct: false,
-      statusCode: err.response ? err.response.status : 0,
-    };
+    return buildEmptyResult(url, err.response ? err.response.status : 0);
   }
 
   if (statusCode === 404) {
-    return {
-      url,
-      name: null,
-      price: null,
-      currency: null,
-      sku: null,
-      category: null,
-      imageUrl: null,
-      description: null,
-      isAvailable: false,
-      isProduct: false,
-      statusCode,
-    };
+    return buildEmptyResult(url, 404);
   }
 
+  return scrapeProductFromHtml(url, html, statusCode);
+}
+
+/**
+ * Parses raw HTML for a product page and extracts all product fields.
+ * Separated from scrapeProduct to allow unit testing with HTML fixtures.
+ * @param {string} url - The product URL (used only in the return value).
+ * @param {string} html - Raw HTML string of the product page.
+ * @param {number} [statusCode=200] - HTTP status code of the response.
+ * @returns {ProductData} Parsed product data.
+ */
+function scrapeProductFromHtml(url, html, statusCode = 200) {
   const $ = load(html);
   const isProduct = isWooCommerceProduct($);
 
   if (!isProduct) {
-    return {
-      url,
-      name: null,
-      price: null,
-      currency: null,
-      sku: null,
-      category: null,
-      imageUrl: null,
-      description: null,
-      isAvailable: false,
-      isProduct: false,
-      statusCode,
-    };
+    return buildEmptyResult(url, statusCode);
   }
 
   const name = extractText($, SELECTOR_PRODUCT_TITLE);
-  const { price, currency } = extractPrice($);
+  const { price, originalPrice, currency } = extractPrice($);
+  const discountPercentage = extractDiscountPercentage($);
   const sku = extractText($, SELECTOR_PRODUCT_SKU);
   const category = extractText($, SELECTOR_PRODUCT_CATEGORY);
   const imageUrl = extractImageUrl($);
   const description = extractText($, SELECTOR_PRODUCT_DESCRIPTION);
-  const isAvailable = checkAvailability($);
+  const stockLocations = extractStockLocations($);
+  const isAvailable = stockLocations.length > 0
+    ? stockLocations.some((loc) => loc.quantity > 0)
+    : checkAvailability($);
 
   return {
     url,
     name,
     price,
+    originalPrice,
+    discountPercentage,
     currency,
     sku,
     category,
     imageUrl,
     description,
+    stockLocations,
     isAvailable,
     isProduct: true,
+    statusCode,
+  };
+}
+
+/**
+ * Builds a blank ProductData object for pages that are not products or that errored.
+ * @param {string} url - The product URL.
+ * @param {number} statusCode - HTTP status code.
+ * @returns {ProductData}
+ */
+function buildEmptyResult(url, statusCode) {
+  return {
+    url,
+    name: null,
+    price: null,
+    originalPrice: null,
+    discountPercentage: null,
+    currency: null,
+    sku: null,
+    category: null,
+    imageUrl: null,
+    description: null,
+    stockLocations: [],
+    isAvailable: false,
+    isProduct: false,
     statusCode,
   };
 }
@@ -149,61 +170,84 @@ function extractText($, selector) {
 }
 
 /**
- * Extracts a numeric price and currency string from a WooCommerce product page.
- * Handles price ranges by returning the lowest price.
+ * Extracts price information from a WooCommerce product page.
+ * When a sale price is present (inside an <ins> element), that is returned as `price`
+ * and the struck-through original is returned as `originalPrice`.
+ * When no sale, `price` is the regular price and `originalPrice` is null.
  * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
- * @returns {{ price: number|null, currency: string|null }}
+ * @returns {{ price: number|null, originalPrice: number|null, currency: string|null }}
  */
 function extractPrice($) {
-  const priceSelector = SELECTOR_PRODUCT_PRICE;
-  const amounts = [];
+  // Check for a sale price first (inside <ins>)
+  const saleEl = $(SELECTOR_PRODUCT_SALE_PRICE).first();
+  if (saleEl.length) {
+    const saleRaw = saleEl.text().trim();
+    const salePrice = parseNumericPrice(saleRaw);
+    const currency = extractCurrencySymbol(saleRaw);
 
-  $(priceSelector).each((_, el) => {
-    const text = $(el).text().trim();
-    if (text) amounts.push(text);
-  });
+    // Also grab original (del) price
+    const origEl = $(SELECTOR_PRODUCT_ORIGINAL_PRICE).first();
+    const origPrice = origEl.length ? parseNumericPrice(origEl.text().trim()) : null;
 
-  if (amounts.length === 0) return { price: null, currency: null };
+    return { price: salePrice, originalPrice: origPrice, currency };
+  }
 
-  // Use the first price amount found
-  const raw = amounts[0];
-  const numeric = parseNumericPrice(raw);
-  const currency = extractCurrencySymbol(raw);
+  // No sale: use regular price
+  const priceEl = $(SELECTOR_PRODUCT_PRICE).first();
+  if (!priceEl.length) return { price: null, originalPrice: null, currency: null };
 
-  return { price: numeric, currency };
+  const raw = priceEl.text().trim();
+  return {
+    price: parseNumericPrice(raw),
+    originalPrice: null,
+    currency: extractCurrencySymbol(raw),
+  };
 }
 
 /**
  * Parses a raw price string into a numeric value, removing currency symbols and formatting.
- * @param {string} raw - Raw price string (e.g. "\u20a1 12,345.00" or "$ 99.99").
+ * Handles formats used in Costa Rica where a period is the thousands separator
+ * (e.g. "39.900" means 39,900) as well as standard US and European formats.
+ * @param {string} raw - Raw price string (e.g. "\u20a1 39.900" or "$ 99.99").
  * @returns {number|null} Numeric price, or null if parsing fails.
  */
 function parseNumericPrice(raw) {
-  // Remove currency symbols, letters, and whitespace; handle comma/dot formatting
   const cleaned = raw.replace(/[^0-9.,]/g, '').trim();
   if (!cleaned) return null;
 
-  // Handle formats: "1,234.56" -> 1234.56 or "1.234,56" -> 1234.56
   let normalized;
+
   if (cleaned.includes(',') && cleaned.includes('.')) {
-    // Determine which is decimal separator
+    // Both separators present: determine which is decimal
     const lastComma = cleaned.lastIndexOf(',');
     const lastDot = cleaned.lastIndexOf('.');
     if (lastDot > lastComma) {
-      // "1,234.56" style
+      // US style: "1,234.56" - comma is thousands, dot is decimal
       normalized = cleaned.replace(/,/g, '');
     } else {
-      // "1.234,56" style
+      // European style: "1.234,56" - dot is thousands, comma is decimal
       normalized = cleaned.replace(/\./g, '').replace(',', '.');
     }
-  } else if (cleaned.includes(',')) {
-    // Could be "1,234" (no cents) or "1,23" (European decimal)
+  } else if (cleaned.includes(',') && !cleaned.includes('.')) {
     const parts = cleaned.split(',');
-    if (parts[parts.length - 1].length === 2) {
-      // Likely European decimal
-      normalized = cleaned.replace(/\./g, '').replace(',', '.');
+    const afterComma = parts[parts.length - 1];
+    if (afterComma.length <= 2) {
+      // "1,50" or "1234,56" - comma is decimal separator
+      normalized = cleaned.replace(',', '.');
     } else {
+      // "1,234" or "1,234,567" - comma is thousands separator
       normalized = cleaned.replace(/,/g, '');
+    }
+  } else if (cleaned.includes('.') && !cleaned.includes(',')) {
+    const parts = cleaned.split('.');
+    // If every part after the first has exactly 3 digits, dots are thousands separators
+    // e.g. "39.900" -> 39900, "1.234.567" -> 1234567
+    const allThreeDigits = parts.slice(1).every((p) => p.length === 3);
+    if (allThreeDigits && parts.length > 1) {
+      normalized = cleaned.replace(/\./g, '');
+    } else {
+      // e.g. "99.99" or "1.5" - dot is decimal separator
+      normalized = cleaned;
     }
   } else {
     normalized = cleaned;
@@ -226,9 +270,83 @@ function extractCurrencySymbol(raw) {
 }
 
 /**
- * Checks whether a WooCommerce product is currently in stock.
+ * Extracts the discount percentage from a WooCommerce on-sale badge.
+ * Returns null if the product is not on sale or no percentage badge is found.
  * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
- * @returns {boolean} True if the product is available/in-stock.
+ * @returns {number|null} Discount percentage as a positive integer, or null.
+ */
+function extractDiscountPercentage($) {
+  const badge = $(SELECTOR_DISCOUNT_BADGE).first();
+  if (!badge.length) return null;
+  const text = badge.text().trim();
+  // Match patterns like "-3%", "3% OFF", "Descuento 3%"
+  const match = text.match(/(\d+)\s*%/);
+  if (!match) return null;
+  return parseInt(match[1], 10);
+}
+
+/**
+ * Extracts per-store stock location data from the product page.
+ * Tries multiple container/row selector pairs defined in STOCK_LOCATION_SELECTORS.
+ * Falls back to parsing visible stock text if no structured table is found.
+ * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
+ * @returns {StockLocation[]} Array of location objects with name and quantity.
+ */
+function extractStockLocations($) {
+  for (const [containerSel, rowSel] of STOCK_LOCATION_SELECTORS) {
+    const container = $(containerSel);
+    if (!container.length) continue;
+
+    const locations = [];
+    container.find(rowSel).each((_, el) => {
+      const cells = $(el).find('td');
+      if (cells.length >= 2) {
+        const locationName = $(cells[0]).text().trim();
+        const qtyText = $(cells[1]).text().trim();
+        const qty = parseStockQuantity(qtyText);
+        if (locationName && qty !== null) {
+          locations.push({ location: locationName, quantity: qty });
+        }
+      } else {
+        // For <li> elements: "Alajuela: 1 en stock"
+        const text = $(el).text().trim();
+        const parsed = parseStockLocationText(text);
+        if (parsed) locations.push(parsed);
+      }
+    });
+
+    if (locations.length > 0) return locations;
+  }
+
+  return [];
+}
+
+/**
+ * Parses a quantity string (e.g. "1 en stock", "2 unidades", "1") into a number.
+ * @param {string} text - Raw quantity text from a stock cell.
+ * @returns {number|null} Quantity as a number, or null if unparseable.
+ */
+function parseStockQuantity(text) {
+  const match = text.match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Parses a stock location string in the format "Location Name: N en stock".
+ * @param {string} text - Raw text of a stock location list item.
+ * @returns {StockLocation|null} Parsed location object, or null if format is unrecognized.
+ */
+function parseStockLocationText(text) {
+  const match = text.match(/^(.+?):\s*(\d+)/);
+  if (!match) return null;
+  return { location: match[1].trim(), quantity: parseInt(match[2], 10) };
+}
+
+/**
+ * Checks whether a WooCommerce product is currently in stock using standard WooCommerce classes.
+ * Used as a fallback when no structured stock location data is found.
+ * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
+ * @returns {boolean} True if the product appears to be available.
  */
 function checkAvailability($) {
   const outOfStock = $('.stock.out-of-stock, .out-of-stock').length > 0;
@@ -250,11 +368,17 @@ function extractImageUrl($) {
 
 module.exports = {
   scrapeProduct,
+  scrapeProductFromHtml,
+  buildEmptyResult,
   isWooCommerceProduct,
   extractText,
   extractPrice,
   parseNumericPrice,
   extractCurrencySymbol,
+  extractDiscountPercentage,
+  extractStockLocations,
+  parseStockQuantity,
+  parseStockLocationText,
   checkAvailability,
   extractImageUrl,
 };

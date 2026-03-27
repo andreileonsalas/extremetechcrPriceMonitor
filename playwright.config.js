@@ -21,7 +21,7 @@ module.exports = defineConfig({
     },
   ],
   webServer: {
-    command: 'npx serve public -p 8080 -s',
+    command: 'node scripts/serve.js 8080',
     port: 8080,
     reuseExistingServer: !process.env.CI,
   },

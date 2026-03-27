@@ -6,29 +6,6 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const AdmZip = require('adm-zip');
 
-/**
- * Specific product test cases that must always pass.
- * These represent real products that should be present in the database.
- * If these fail, it signals that data collection has broken.
- */
-const REQUIRED_PRODUCTS = [
-  {
-    name: 'Laptop',
-    urlPattern: /laptop/i,
-    description: 'A laptop product must exist in the database',
-  },
-  {
-    name: 'Mouse',
-    urlPattern: /mouse/i,
-    description: 'A mouse product must exist in the database',
-  },
-  {
-    name: 'Monitor',
-    urlPattern: /monitor/i,
-    description: 'A monitor product must exist in the database',
-  },
-];
-
 /** Path to a test SQLite database used for e2e tests */
 const TEST_DB_PATH = path.join(__dirname, '../../tmp/e2e-prices.db');
 
@@ -37,6 +14,8 @@ const TEST_ZIP_PATH = path.join(__dirname, '../../public/db.zip');
 
 /**
  * Creates a minimal test SQLite database with seed data for e2e tests.
+ * Includes the 3 required specific products from ExtremeTechCR with their
+ * exact prices and SKUs as provided by the product owner.
  */
 function createTestDatabase() {
   const dir = path.dirname(TEST_DB_PATH);
@@ -54,6 +33,7 @@ function createTestDatabase() {
       category TEXT,
       description TEXT,
       imageUrl TEXT,
+      stockLocations TEXT,
       firstSeenAt TEXT NOT NULL,
       lastCheckedAt TEXT NOT NULL,
       isActive INTEGER DEFAULT 1
@@ -63,6 +43,7 @@ function createTestDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       productId INTEGER NOT NULL,
       price REAL,
+      originalPrice REAL,
       currency TEXT,
       startDate TEXT NOT NULL,
       endDate TEXT
@@ -71,25 +52,77 @@ function createTestDatabase() {
 
   const now = new Date().toISOString();
   const insertProduct = db.prepare(`
-    INSERT INTO products (url, name, sku, category, description, imageUrl, firstSeenAt, lastCheckedAt, isActive)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+    INSERT INTO products (url, name, sku, category, description, imageUrl, stockLocations, firstSeenAt, lastCheckedAt, isActive)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
   `);
   const insertPrice = db.prepare(`
-    INSERT INTO priceHistory (productId, price, currency, startDate)
-    VALUES (?, ?, 'CRC', ?)
+    INSERT INTO priceHistory (productId, price, originalPrice, currency, startDate)
+    VALUES (?, ?, ?, 'CRC', ?)
   `);
 
+  /**
+   * Seed data - includes the 3 required specific products plus extras.
+   * originalPrice is non-null for products on sale (Razer Kraken).
+   */
   const seedData = [
-    { url: 'https://extremetechcr.com/producto/laptop-gaming-asus', name: 'ASUS Gaming Laptop ROG', price: 850000 },
-    { url: 'https://extremetechcr.com/producto/mouse-logitech-g502', name: 'Logitech G502 Mouse', price: 45000 },
-    { url: 'https://extremetechcr.com/producto/monitor-lg-27-4k', name: 'LG 27 Inch 4K Monitor', price: 350000 },
-    { url: 'https://extremetechcr.com/producto/teclado-mecanico', name: 'Mechanical Keyboard', price: 75000 },
-    { url: 'https://extremetechcr.com/producto/ssd-samsung-1tb', name: 'Samsung 1TB SSD', price: 95000 },
+    {
+      url: 'https://extremetechcr.com/producto/intel-pentium-gold-g6405/',
+      name: 'Intel Pentium Gold G6405',
+      sku: 'CPU1011',
+      category: 'Procesadores',
+      price: 39900,
+      originalPrice: null,
+      stockLocations: JSON.stringify([
+        { location: 'Alajuela', quantity: 1 },
+        { location: 'San Jose Centro', quantity: 1 },
+        { location: 'Bodega Central', quantity: 2 },
+      ]),
+    },
+    {
+      url: 'https://extremetechcr.com/producto/msi-pro-mp225v-22-100hz-9s6-3pe0cm-020/',
+      name: 'MSI PRO MP225V 22 100Hz Monitor',
+      sku: 'MT2736',
+      category: 'Monitores',
+      price: 34900,
+      originalPrice: null,
+      stockLocations: JSON.stringify([{ location: 'Guapiles', quantity: 1 }]),
+    },
+    {
+      url: 'https://extremetechcr.com/producto/razer-kraken-kitty-edition-v2-pro-rosa/',
+      name: 'Razer Kraken Kitty Edition V2 Pro Rosa',
+      sku: 'HE6006',
+      category: 'Audifonos',
+      price: 67901,
+      originalPrice: 69900,
+      stockLocations: JSON.stringify([
+        { location: 'San Jose Centro', quantity: 2 },
+        { location: 'Alajuela', quantity: 1 },
+        { location: 'Heredia', quantity: 3 },
+      ]),
+    },
+    {
+      url: 'https://extremetechcr.com/producto/laptop-gaming-asus',
+      name: 'ASUS Gaming Laptop ROG',
+      sku: 'LT001',
+      category: 'Laptops',
+      price: 850000,
+      originalPrice: null,
+      stockLocations: null,
+    },
+    {
+      url: 'https://extremetechcr.com/producto/mouse-logitech-g502',
+      name: 'Logitech G502 Mouse',
+      sku: 'MS001',
+      category: 'Mouses',
+      price: 45000,
+      originalPrice: null,
+      stockLocations: null,
+    },
   ];
 
-  seedData.forEach(({ url, name, price }) => {
-    const result = insertProduct.run(url, name, null, 'Electronics', null, null, now, now);
-    insertPrice.run(result.lastInsertRowid, price, now);
+  seedData.forEach(({ url, name, sku, category, price, originalPrice, stockLocations }) => {
+    const result = insertProduct.run(url, name, sku, category, null, null, stockLocations, now, now);
+    insertPrice.run(result.lastInsertRowid, price, originalPrice, now);
   });
 
   db.close();
@@ -222,20 +255,125 @@ test.describe('Frontend - Price History Modal', () => {
   });
 });
 
-test.describe('Required Products - Specific Test Cases', () => {
+/* =========================================================
+   REQUIRED SPECIFIC PRODUCT TESTS
+   These 3 specific products from ExtremeTechCR must ALWAYS
+   appear correctly in the UI. Failure here means data
+   collection or the frontend display logic is broken.
+   ========================================================= */
+
+test.describe('REQUIRED: Intel Pentium Gold G6405 (CPU1011)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#loadingState')).toBeHidden({ timeout: 15000 });
+    await page.fill('#searchInput', 'Pentium');
+    await page.waitForTimeout(400);
   });
 
-  for (const product of REQUIRED_PRODUCTS) {
-    test(`REQUIRED: ${product.name} product is visible in the UI`, async ({ page }) => {
-      await page.fill('#searchInput', product.name);
-      await page.waitForTimeout(400);
-      const cards = page.locator('.product-card');
-      await expect(cards.first()).toBeVisible();
-      const title = await cards.first().locator('.card-title').textContent();
-      expect(title.toLowerCase()).toContain(product.name.toLowerCase());
-    });
-  }
+  test('product card is visible', async ({ page }) => {
+    await expect(page.locator('.product-card').first()).toBeVisible();
+  });
+
+  test('product name contains Intel Pentium Gold G6405', async ({ page }) => {
+    const title = await page.locator('.product-card .card-title').first().textContent();
+    expect(title.toLowerCase()).toContain('pentium');
+  });
+
+  test('displays price 39900 CRC', async ({ page }) => {
+    const badge = await page.locator('.product-card .price-badge').first().textContent();
+    expect(badge).toContain('39');
+    expect(badge).toContain('900');
+  });
+
+  test('does not show a discount badge (not on sale)', async ({ page }) => {
+    const card = page.locator('.product-card').first();
+    await expect(card.locator('.discount-badge')).not.toBeVisible();
+  });
+
+  test('shows stock location information', async ({ page }) => {
+    const card = page.locator('.product-card').first();
+    const stockHtml = await card.locator('.stock-locations').textContent();
+    expect(stockHtml).toContain('Alajuela');
+    expect(stockHtml).toContain('Bodega Central');
+  });
+});
+
+test.describe('REQUIRED: MSI PRO MP225V 22 100Hz Monitor (MT2736)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#loadingState')).toBeHidden({ timeout: 15000 });
+    await page.fill('#searchInput', 'MSI PRO');
+    await page.waitForTimeout(400);
+  });
+
+  test('product card is visible', async ({ page }) => {
+    await expect(page.locator('.product-card').first()).toBeVisible();
+  });
+
+  test('product name contains MSI', async ({ page }) => {
+    const title = await page.locator('.product-card .card-title').first().textContent();
+    expect(title.toLowerCase()).toContain('msi');
+  });
+
+  test('displays price 34900 CRC', async ({ page }) => {
+    const badge = await page.locator('.product-card .price-badge').first().textContent();
+    expect(badge).toContain('34');
+    expect(badge).toContain('900');
+  });
+
+  test('does not show a discount badge (not on sale)', async ({ page }) => {
+    const card = page.locator('.product-card').first();
+    await expect(card.locator('.discount-badge')).not.toBeVisible();
+  });
+
+  test('shows stock location for Guapiles', async ({ page }) => {
+    const card = page.locator('.product-card').first();
+    const stockHtml = await card.locator('.stock-locations').textContent();
+    expect(stockHtml).toContain('Guapiles');
+  });
+});
+
+test.describe('REQUIRED: Razer Kraken Kitty Edition V2 Pro Rosa (HE6006)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#loadingState')).toBeHidden({ timeout: 15000 });
+    await page.fill('#searchInput', 'Razer');
+    await page.waitForTimeout(400);
+  });
+
+  test('product card is visible', async ({ page }) => {
+    await expect(page.locator('.product-card').first()).toBeVisible();
+  });
+
+  test('product name contains Razer Kraken', async ({ page }) => {
+    const title = await page.locator('.product-card .card-title').first().textContent();
+    expect(title.toLowerCase()).toContain('razer');
+    expect(title.toLowerCase()).toContain('kraken');
+  });
+
+  test('displays sale price 67901 CRC', async ({ page }) => {
+    const badge = await page.locator('.product-card .price-badge').first().textContent();
+    expect(badge).toContain('67');
+    expect(badge).toContain('901');
+  });
+
+  test('shows the original price (69900) struck-through', async ({ page }) => {
+    const card = page.locator('.product-card').first();
+    const strikethrough = await card.locator('.text-decoration-line-through').first().textContent();
+    expect(strikethrough).toContain('69');
+    expect(strikethrough).toContain('900');
+  });
+
+  test('shows discount badge with 3% off', async ({ page }) => {
+    const card = page.locator('.product-card').first();
+    const badge = await card.locator('.discount-badge').first().textContent();
+    expect(badge).toContain('3%');
+  });
+
+  test('shows stock location information', async ({ page }) => {
+    const card = page.locator('.product-card').first();
+    const stockHtml = await card.locator('.stock-locations').textContent();
+    expect(stockHtml).toContain('San Jose Centro');
+    expect(stockHtml).toContain('Alajuela');
+  });
 });

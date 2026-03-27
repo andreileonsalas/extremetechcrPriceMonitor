@@ -39,7 +39,7 @@ async function processProductUrl(url) {
     }
 
     const productId = upsertProduct(data);
-    recordPrice(productId, data.price, data.currency);
+    recordPrice(productId, data.price, data.currency, data.originalPrice);
     console.log(`Updated: ${url} | Price: ${data.price} ${data.currency}`);
   } catch (err) {
     console.error(`Error processing ${url}: ${err.message}`);

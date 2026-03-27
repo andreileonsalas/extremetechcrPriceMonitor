@@ -41,8 +41,32 @@ const SKIP_URL_PATTERNS = [
 /** @type {string} CSS selector for the product title on WooCommerce pages */
 const SELECTOR_PRODUCT_TITLE = 'h1.product_title, h1.entry-title';
 
-/** @type {string} CSS selector for the product price on WooCommerce pages */
-const SELECTOR_PRODUCT_PRICE = '.price .amount, .price ins .amount, .woocommerce-Price-amount';
+/** @type {string} CSS selector for the active (sale) price inside an <ins> element */
+const SELECTOR_PRODUCT_SALE_PRICE = '.price ins .woocommerce-Price-amount, .price ins .amount';
+
+/** @type {string} CSS selector for any price amount (fallback when no sale price) */
+const SELECTOR_PRODUCT_PRICE = '.price .woocommerce-Price-amount, .price .amount';
+
+/** @type {string} CSS selector for the original (struck-through) price inside a <del> element */
+const SELECTOR_PRODUCT_ORIGINAL_PRICE = '.price del .woocommerce-Price-amount, .price del .amount';
+
+/** @type {string} CSS selector for the on-sale badge showing the discount percentage */
+const SELECTOR_DISCOUNT_BADGE = '.onsale, .woocommerce-badge--onsale, span.onsale';
+
+/**
+ * Selectors tried in order when looking for per-store stock location rows.
+ * Each entry is a pair: [containerSelector, rowSelector].
+ * The scraper iterates these until it finds results.
+ * @type {Array<[string, string]>}
+ */
+const STOCK_LOCATION_SELECTORS = [
+  ['.wc-stock-locations', 'tr'],
+  ['.stock-locations', 'li'],
+  ['.atum-stock-details', 'tr'],
+  ['.woosq-table', 'tr'],
+  ['.store-locator-table', 'tr'],
+  ['table.shop_table.stock', 'tr'],
+];
 
 /** @type {string} CSS selector for the product SKU */
 const SELECTOR_PRODUCT_SKU = '.sku';
@@ -68,6 +92,10 @@ module.exports = {
   SKIP_URL_PATTERNS,
   SELECTOR_PRODUCT_TITLE,
   SELECTOR_PRODUCT_PRICE,
+  SELECTOR_PRODUCT_SALE_PRICE,
+  SELECTOR_PRODUCT_ORIGINAL_PRICE,
+  SELECTOR_DISCOUNT_BADGE,
+  STOCK_LOCATION_SELECTORS,
   SELECTOR_PRODUCT_SKU,
   SELECTOR_PRODUCT_CATEGORY,
   SELECTOR_PRODUCT_IMAGE,

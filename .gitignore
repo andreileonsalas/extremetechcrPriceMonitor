@@ -1,8 +1,8 @@
 node_modules/
 data/
 *.db
-*.zip
 dist/
 coverage/
 .env
 tmp/
+test-results/

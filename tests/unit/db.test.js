@@ -81,6 +81,7 @@ describe('database', () => {
         category: null,
         description: null,
         imageUrl: null,
+        stockLocations: [],
         isAvailable: true,
       });
       db.recordPrice(id, 15000, 'CRC');
@@ -89,7 +90,7 @@ describe('database', () => {
       expect(history[0].price).toBe(15000);
     });
 
-    test('extends endDate when price is unchanged', () => {
+    test('extends endDate when price and originalPrice are unchanged', () => {
       const id = db.upsertProduct({
         url: 'https://extremetechcr.com/producto/mouse-test',
         name: 'Test Mouse',
@@ -97,10 +98,11 @@ describe('database', () => {
         category: null,
         description: null,
         imageUrl: null,
+        stockLocations: [],
         isAvailable: true,
       });
-      db.recordPrice(id, 15000, 'CRC');
-      db.recordPrice(id, 15000, 'CRC');
+      db.recordPrice(id, 15000, 'CRC', null);
+      db.recordPrice(id, 15000, 'CRC', null);
       const history = db.getPriceHistory('https://extremetechcr.com/producto/mouse-test');
       expect(history.length).toBe(1);
     });
@@ -113,14 +115,33 @@ describe('database', () => {
         category: null,
         description: null,
         imageUrl: null,
+        stockLocations: [],
         isAvailable: true,
       });
-      db.recordPrice(id, 15000, 'CRC');
-      db.recordPrice(id, 18000, 'CRC');
+      db.recordPrice(id, 15000, 'CRC', null);
+      db.recordPrice(id, 18000, 'CRC', null);
       const history = db.getPriceHistory('https://extremetechcr.com/producto/mouse-test');
       expect(history.length).toBe(2);
       expect(history[0].price).toBe(15000);
       expect(history[1].price).toBe(18000);
+    });
+
+    test('creates a new record when originalPrice changes (sale starts)', () => {
+      const id = db.upsertProduct({
+        url: 'https://extremetechcr.com/producto/mouse-test',
+        name: 'Test Mouse',
+        sku: null,
+        category: null,
+        description: null,
+        imageUrl: null,
+        stockLocations: [],
+        isAvailable: true,
+      });
+      db.recordPrice(id, 15000, 'CRC', null);
+      db.recordPrice(id, 14550, 'CRC', 15000);
+      const history = db.getPriceHistory('https://extremetechcr.com/producto/mouse-test');
+      expect(history.length).toBe(2);
+      expect(history[1].originalPrice).toBe(15000);
     });
   });
 
@@ -133,6 +154,7 @@ describe('database', () => {
         category: null,
         description: null,
         imageUrl: null,
+        stockLocations: [],
         isAvailable: true,
       });
       db.markProductInactive('https://extremetechcr.com/producto/discontinued');
@@ -143,8 +165,8 @@ describe('database', () => {
 
   describe('getAllProductUrls', () => {
     test('returns all tracked product URLs', () => {
-      db.upsertProduct({ url: 'https://extremetechcr.com/producto/a', name: 'A', sku: null, category: null, description: null, imageUrl: null, isAvailable: true });
-      db.upsertProduct({ url: 'https://extremetechcr.com/producto/b', name: 'B', sku: null, category: null, description: null, imageUrl: null, isAvailable: true });
+      db.upsertProduct({ url: 'https://extremetechcr.com/producto/a', name: 'A', sku: null, category: null, description: null, imageUrl: null, stockLocations: [], isAvailable: true });
+      db.upsertProduct({ url: 'https://extremetechcr.com/producto/b', name: 'B', sku: null, category: null, description: null, imageUrl: null, stockLocations: [], isAvailable: true });
       const urls = db.getAllProductUrls();
       expect(urls).toContain('https://extremetechcr.com/producto/a');
       expect(urls).toContain('https://extremetechcr.com/producto/b');

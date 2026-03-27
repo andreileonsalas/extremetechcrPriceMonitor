@@ -7,8 +7,8 @@
 /** @type {string} Path to the ZIP file containing the SQLite database */
 const DB_ZIP_URL = 'db.zip';
 
-/** @type {string} Path to the sql.js WASM file */
-const SQL_WASM_URL = 'https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.wasm';
+/** @type {string} Path to the sql.js WASM file (relative to the page) */
+const SQL_WASM_URL = 'vendor/sql-wasm.wasm';
 
 /** @type {number} Default number of days shown in the price history chart */
 const DEFAULT_CHART_DAYS = 365;
@@ -85,13 +85,13 @@ async function loadDatabaseFromZip() {
    ========================================================= */
 
 /**
- * Queries all active products with their current (latest) price.
+ * Queries all active products with their current (latest) price and stock info.
  * @returns {Array<Object>} Array of product row objects.
  */
 function queryAllProducts() {
   const result = sqlDb.exec(`
     SELECT p.id, p.url, p.name, p.sku, p.category, p.imageUrl, p.lastCheckedAt,
-           ph.price, ph.currency
+           p.stockLocations, ph.price, ph.originalPrice, ph.currency
     FROM products p
     LEFT JOIN priceHistory ph ON ph.productId = p.id AND ph.endDate IS NULL
     WHERE p.isActive = 1
@@ -116,15 +116,18 @@ function queryPriceHistory(productId, days) {
   since.setDate(since.getDate() - days);
   const sinceIso = since.toISOString();
 
+  // Use ISO format for 'now' comparison to match our stored dates (YYYY-MM-DDTHH:MM:SS.sssZ)
+  const nowIso = new Date().toISOString();
+
   const stmt = sqlDb.prepare(`
-    SELECT price, currency, startDate, endDate
+    SELECT price, originalPrice, currency, startDate, endDate
     FROM priceHistory
-    WHERE productId = :id
-      AND (endDate IS NULL OR endDate >= :since)
-      AND startDate <= datetime('now')
+    WHERE productId = $id
+      AND (endDate IS NULL OR endDate >= $since)
+      AND startDate <= $now
     ORDER BY startDate ASC
   `);
-  stmt.bind({ ':id': safeId, ':since': sinceIso });
+  stmt.bind({ $id: safeId, $since: sinceIso, $now: nowIso });
   const rows = [];
   while (stmt.step()) {
     rows.push(stmt.getAsObject());
@@ -198,18 +201,20 @@ function renderProducts(products) {
 
 /**
  * Builds the Bootstrap card HTML for a single product.
+ * Shows a strikethrough original price and discount badge when on sale.
+ * Shows per-store stock information when available.
  * @param {Object} product - Product row object.
  * @returns {string} HTML string for the product card.
  */
 function buildProductCardHtml(product) {
   const name = escapeHtml(product.name || UNKNOWN_PRODUCT_NAME);
-  const price = product.price != null
-    ? `${CRC_SYMBOL} ${formatNumber(product.price)}`
-    : 'Price unavailable';
   const category = product.category ? escapeHtml(product.category) : '';
   const imgHtml = product.imageUrl
     ? `<img src="${escapeHtml(product.imageUrl)}" class="product-img" alt="${name}" loading="lazy" />`
     : `<div class="product-img-placeholder">No image</div>`;
+
+  const priceHtml = buildPriceHtml(product);
+  const stockHtml = buildStockHtml(product.stockLocations);
 
   return `
     <div class="card h-100 product-card"
@@ -219,12 +224,64 @@ function buildProductCardHtml(product) {
       <div class="card-body">
         <h6 class="card-title">${name}</h6>
         ${category ? `<p class="card-text text-muted small mb-1">${category}</p>` : ''}
-        <span class="badge bg-success price-badge">${price}</span>
+        ${priceHtml}
+        ${stockHtml}
       </div>
       <div class="card-footer text-muted small">
         <a href="${escapeHtml(product.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View product</a>
       </div>
     </div>`;
+}
+
+/**
+ * Builds the price section HTML for a product card.
+ * Shows original (struck-through) price and a discount badge when on sale.
+ * @param {Object} product - Product row object with price, originalPrice fields.
+ * @returns {string} HTML snippet for the price display.
+ */
+function buildPriceHtml(product) {
+  if (product.price == null) {
+    return '<span class="text-muted small">Price unavailable</span>';
+  }
+  const activePrice = `${CRC_SYMBOL} ${formatNumber(product.price)}`;
+
+  if (product.originalPrice != null && product.originalPrice > product.price) {
+    const origPrice = `${CRC_SYMBOL} ${formatNumber(product.originalPrice)}`;
+    const discountPct = Math.round(
+      ((product.originalPrice - product.price) / product.originalPrice) * 100
+    );
+    return `
+      <div class="price-block">
+        <span class="text-muted text-decoration-line-through small">${origPrice}</span>
+        <span class="badge bg-danger ms-1 discount-badge">-${discountPct}%</span>
+        <br/>
+        <span class="badge bg-success price-badge">${activePrice}</span>
+      </div>`;
+  }
+
+  return `<span class="badge bg-success price-badge">${activePrice}</span>`;
+}
+
+/**
+ * Builds the stock location HTML for a product card.
+ * Parses the JSON stockLocations string stored in the database.
+ * @param {string|null} stockLocationsJson - JSON string of StockLocation[].
+ * @returns {string} HTML snippet listing stock per location, or empty string.
+ */
+function buildStockHtml(stockLocationsJson) {
+  if (!stockLocationsJson) return '';
+  let locations;
+  try {
+    locations = JSON.parse(stockLocationsJson);
+  } catch (_) {
+    return '';
+  }
+  if (!Array.isArray(locations) || locations.length === 0) return '';
+
+  const rows = locations
+    .map((loc) => `<li class="list-inline-item stock-location-item">${escapeHtml(loc.location)}: ${loc.quantity}</li>`)
+    .join('');
+  return `<ul class="list-inline stock-locations mt-1 mb-0">${rows}</ul>`;
 }
 
 /* =========================================================

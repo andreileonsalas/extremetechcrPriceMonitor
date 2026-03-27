@@ -54,6 +54,8 @@ function openDatabase() {
 
 /**
  * Creates the database tables if they do not already exist.
+ * Also adds columns introduced in schema updates (originalPrice, stockLocations)
+ * to databases that were created before those columns existed.
  * @param {Database} db - The better-sqlite3 Database instance.
  */
 function initializeSchema(db) {
@@ -66,6 +68,7 @@ function initializeSchema(db) {
       category TEXT,
       description TEXT,
       imageUrl TEXT,
+      stockLocations TEXT,
       firstSeenAt TEXT NOT NULL,
       lastCheckedAt TEXT NOT NULL,
       isActive INTEGER DEFAULT 1
@@ -75,6 +78,7 @@ function initializeSchema(db) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       productId INTEGER NOT NULL,
       price REAL,
+      originalPrice REAL,
       currency TEXT,
       startDate TEXT NOT NULL,
       endDate TEXT,
@@ -85,6 +89,26 @@ function initializeSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_price_history_product ON priceHistory(productId);
     CREATE INDEX IF NOT EXISTS idx_price_history_dates ON priceHistory(startDate, endDate);
   `);
+
+  // Migrate older databases that may not have these columns yet
+  addColumnIfMissing(db, 'products', 'stockLocations', 'TEXT');
+  addColumnIfMissing(db, 'priceHistory', 'originalPrice', 'REAL');
+}
+
+/**
+ * Adds a column to a table only if it does not already exist.
+ * Used for non-destructive schema migrations on existing databases.
+ * @param {Database} db - The better-sqlite3 Database instance.
+ * @param {string} table - Table name.
+ * @param {string} column - Column name to add.
+ * @param {string} type - SQLite column type (e.g. "TEXT", "REAL").
+ */
+function addColumnIfMissing(db, table, column, type) {
+  const existing = db.pragma(`table_info(${table})`);
+  const exists = existing.some((col) => col.name === column);
+  if (!exists) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 /**
@@ -97,12 +121,16 @@ function initializeSchema(db) {
  * @param {string|null} productData.category
  * @param {string|null} productData.description
  * @param {string|null} productData.imageUrl
+ * @param {Array} [productData.stockLocations]
  * @param {boolean} productData.isAvailable
  * @returns {number} The product ID.
  */
 function upsertProduct(productData) {
   const db = openDatabase();
   const now = new Date().toISOString();
+  const stockJson = productData.stockLocations && productData.stockLocations.length > 0
+    ? JSON.stringify(productData.stockLocations)
+    : null;
 
   const existing = db.prepare('SELECT id FROM products WHERE url = ?').get(productData.url);
 
@@ -110,7 +138,7 @@ function upsertProduct(productData) {
     db.prepare(`
       UPDATE products
       SET name = ?, sku = ?, category = ?, description = ?, imageUrl = ?,
-          lastCheckedAt = ?, isActive = ?
+          stockLocations = ?, lastCheckedAt = ?, isActive = ?
       WHERE url = ?
     `).run(
       productData.name,
@@ -118,6 +146,7 @@ function upsertProduct(productData) {
       productData.category,
       productData.description,
       productData.imageUrl,
+      stockJson,
       now,
       productData.isAvailable ? 1 : 0,
       productData.url
@@ -126,8 +155,8 @@ function upsertProduct(productData) {
   }
 
   const result = db.prepare(`
-    INSERT INTO products (url, name, sku, category, description, imageUrl, firstSeenAt, lastCheckedAt, isActive)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO products (url, name, sku, category, description, imageUrl, stockLocations, firstSeenAt, lastCheckedAt, isActive)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     productData.url,
     productData.name,
@@ -135,6 +164,7 @@ function upsertProduct(productData) {
     productData.category,
     productData.description,
     productData.imageUrl,
+    stockJson,
     now,
     now,
     productData.isAvailable ? 1 : 0
@@ -145,37 +175,40 @@ function upsertProduct(productData) {
 
 /**
  * Records a price observation for a product.
- * If the latest price record for this product has the same price,
+ * If the latest open price record has the same price and originalPrice,
  * updates its endDate (extending the range) rather than inserting a new row.
- * If the price changed, closes the old record and opens a new one.
+ * If the price or originalPrice changed, closes the old record and opens a new one.
  * @param {number} productId - The product's database ID.
- * @param {number|null} price - The observed price.
+ * @param {number|null} price - The observed (sale or regular) price.
  * @param {string|null} currency - The currency code/symbol.
+ * @param {number|null} [originalPrice=null] - The pre-discount price when on sale.
  */
-function recordPrice(productId, price, currency) {
+function recordPrice(productId, price, currency, originalPrice = null) {
   const db = openDatabase();
   const now = new Date().toISOString();
 
-  // Find the most recent open price record (endDate IS NULL)
   const latest = db.prepare(`
-    SELECT id, price, currency FROM priceHistory
+    SELECT id, price, originalPrice, currency FROM priceHistory
     WHERE productId = ? AND endDate IS NULL
     ORDER BY startDate DESC
     LIMIT 1
   `).get(productId);
 
-  if (latest && latest.price === price && latest.currency === currency) {
-    // Same price: just extend the end date
+  const unchanged = latest
+    && latest.price === price
+    && latest.currency === currency
+    && latest.originalPrice === originalPrice;
+
+  if (unchanged) {
     db.prepare('UPDATE priceHistory SET endDate = ? WHERE id = ?').run(now, latest.id);
   } else {
-    // Price changed (or first record): close the old one and open a new one
     if (latest) {
       db.prepare('UPDATE priceHistory SET endDate = ? WHERE id = ?').run(now, latest.id);
     }
     db.prepare(`
-      INSERT INTO priceHistory (productId, price, currency, startDate)
-      VALUES (?, ?, ?, ?)
-    `).run(productId, price, currency, now);
+      INSERT INTO priceHistory (productId, price, originalPrice, currency, startDate)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(productId, price, originalPrice, currency, now);
   }
 }
 
@@ -191,12 +224,12 @@ function markProductInactive(url) {
 
 /**
  * Returns all active products with their current price (latest open price record).
- * @returns {Array<Product & { price: number|null, currency: string|null }>}
+ * @returns {Array<Product & { price: number|null, originalPrice: number|null, currency: string|null }>}
  */
 function getAllProductsWithCurrentPrice() {
   const db = openDatabase();
   return db.prepare(`
-    SELECT p.*, ph.price, ph.currency
+    SELECT p.*, ph.price, ph.originalPrice, ph.currency
     FROM products p
     LEFT JOIN priceHistory ph ON ph.productId = p.id AND ph.endDate IS NULL
     WHERE p.isActive = 1
@@ -272,6 +305,7 @@ function closeDatabase() {
 module.exports = {
   openDatabase,
   initializeSchema,
+  addColumnIfMissing,
   upsertProduct,
   recordPrice,
   markProductInactive,
