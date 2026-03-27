@@ -10,6 +10,7 @@
 
 const { getProductUrlsFromSitemap } = require('../scraper/sitemapReader');
 const { upsertProduct, getAllProductUrls, exportDatabaseToZip } = require('../database/db');
+const { closeBrowser } = require('../scraper/browser');
 
 /**
  * Runs the sitemap update job.
@@ -39,6 +40,7 @@ async function runSitemapUpdate() {
   }
 
   exportDatabaseToZip();
+  await closeBrowser();
   console.log('Sitemap update job complete');
 }
 

@@ -1,10 +1,8 @@
 'use strict';
 
-const axios = require('axios');
+const { fetchPage } = require('./browser');
 const { load } = require('cheerio');
 const {
-  USER_AGENT,
-  REQUEST_TIMEOUT_MS,
   SELECTOR_PRODUCT_TITLE,
   SELECTOR_PRODUCT_PRICE,
   SELECTOR_PRODUCT_SALE_PRICE,
@@ -52,16 +50,10 @@ async function scrapeProduct(url) {
   let statusCode = 200;
 
   try {
-    const response = await axios.get(url, {
-      headers: { 'User-Agent': USER_AGENT },
-      timeout: REQUEST_TIMEOUT_MS,
-      validateStatus: (status) => status < 500,
-    });
-    statusCode = response.status;
-    html = response.data;
+    ({ html, statusCode } = await fetchPage(url));
   } catch (err) {
     console.error(`Request failed for ${url}: ${err.message}`);
-    return buildEmptyResult(url, err.response ? err.response.status : 0);
+    return buildEmptyResult(url, 0);
   }
 
   if (statusCode === 404) {

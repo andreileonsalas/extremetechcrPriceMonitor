@@ -1,9 +1,9 @@
 'use strict';
 
-const axios = require('axios');
 const { parseSitemap, isProductUrl, fetchUrlsInBatches, delay } = require('../../src/scraper/sitemapReader');
 
-jest.mock('axios');
+jest.mock('../../src/scraper/browser');
+const browser = require('../../src/scraper/browser');
 
 describe('sitemapReader', () => {
   describe('isProductUrl', () => {
@@ -59,7 +59,7 @@ describe('sitemapReader', () => {
           <url><loc>https://extremetechcr.com/producto/monitor-4k</loc></url>
         </urlset>`;
 
-      axios.get.mockResolvedValueOnce({ data: childXml });
+      browser.fetchText.mockResolvedValueOnce(childXml);
 
       const urls = await parseSitemap(indexXml);
       expect(urls).toContain('https://extremetechcr.com/producto/monitor-4k');

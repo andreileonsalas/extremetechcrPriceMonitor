@@ -1,11 +1,9 @@
 'use strict';
 
-const axios = require('axios');
+const { fetchText } = require('./browser');
 const { load } = require('cheerio');
 const {
   SITEMAP_URL,
-  USER_AGENT,
-  REQUEST_TIMEOUT_MS,
   PRODUCT_URL_PATTERNS,
   SKIP_URL_PATTERNS,
   CONCURRENT_REQUESTS,
@@ -13,17 +11,12 @@ const {
 } = require('../config');
 
 /**
- * Fetches the content of a URL with a configured user-agent and timeout.
+ * Fetches the content of a URL using a real browser (handles Cloudflare challenges).
  * @param {string} url - The URL to fetch.
  * @returns {Promise<string>} The response body as a string.
  */
 async function fetchUrl(url) {
-  const response = await axios.get(url, {
-    headers: { 'User-Agent': USER_AGENT },
-    timeout: REQUEST_TIMEOUT_MS,
-    responseType: 'text',
-  });
-  return response.data;
+  return fetchText(url);
 }
 
 /**

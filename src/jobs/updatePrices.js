@@ -17,6 +17,7 @@ const {
   exportDatabaseToZip,
 } = require('../database/db');
 const { fetchUrlsInBatches } = require('../scraper/sitemapReader');
+const { closeBrowser } = require('../scraper/browser');
 
 /**
  * Processes a single product URL: scrapes it and updates the database.
@@ -61,6 +62,7 @@ async function runPriceUpdate() {
   await fetchUrlsInBatches(urls, processProductUrl);
 
   exportDatabaseToZip();
+  await closeBrowser();
   console.log('Price update job complete');
 }
 
