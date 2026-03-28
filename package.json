@@ -7,6 +7,7 @@
   "scripts": {
     "sitemap": "node src/jobs/updateSitemap.js",
     "prices": "node src/jobs/updatePrices.js",
+    "seed": "node scripts/seedDatabase.js",
     "test": "jest",
     "test:unit": "jest tests/unit",
     "test:e2e": "playwright test",

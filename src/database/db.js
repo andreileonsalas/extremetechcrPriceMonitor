@@ -271,6 +271,87 @@ function getAllProductUrls() {
 }
 
 /**
+ * Returns up to `limit` active product URLs ordered by lastCheckedAt ascending
+ * (stale-first). This is used by the daily price-update job to process the
+ * least-recently-checked products first and respect MAX_URLS_PER_RUN.
+ * @param {number} limit - Maximum number of URLs to return.
+ * @returns {string[]} Array of product URLs, stale ones first.
+ */
+function getStaleProductUrls(limit) {
+  const db = openDatabase();
+  return db.prepare(
+    'SELECT url FROM products WHERE isActive = 1 ORDER BY lastCheckedAt ASC LIMIT ?'
+  ).all(limit).map((r) => r.url);
+}
+
+/**
+ * Checks the database for data quality issues that indicate a failed or partial
+ * crawl run.  Returns an object with a boolean `ok` flag and a `warnings` array.
+ * Callers should log warnings and, for critical issues, halt the job.
+ *
+ * Checks performed:
+ *  - nullPriceRatio  : fraction of active products with no price record (alert > 0.8)
+ *  - nullNameRatio   : fraction of active products with null name       (alert > 0.8)
+ *  - dominantName    : most-common non-null name covers > 80% of rows   (alert)
+ *
+ * @returns {{ ok: boolean, warnings: string[] }}
+ */
+function validateDatabaseIntegrity() {
+  const db = openDatabase();
+  const warnings = [];
+
+  const totalRow = db.prepare("SELECT COUNT(*) AS n FROM products WHERE isActive = 1").get();
+  const total = totalRow ? totalRow.n : 0;
+
+  if (total === 0) {
+    return { ok: true, warnings: [] };
+  }
+
+  // Fraction with no open price record
+  const noPriceRow = db.prepare(`
+    SELECT COUNT(*) AS n FROM products p
+    WHERE p.isActive = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM priceHistory ph WHERE ph.productId = p.id AND ph.endDate IS NULL
+      )
+  `).get();
+  const noPriceRatio = (noPriceRow ? noPriceRow.n : 0) / total;
+  if (noPriceRatio >= 0.8) {
+    warnings.push(
+      `CRITICAL: ${Math.round(noPriceRatio * 100)}% of products have no price (${noPriceRow.n}/${total}). ` +
+      'Price crawler may have failed or not run yet.'
+    );
+  }
+
+  // Fraction with null name
+  const nullNameRow = db.prepare(
+    "SELECT COUNT(*) AS n FROM products WHERE isActive = 1 AND name IS NULL"
+  ).get();
+  const nullNameRatio = (nullNameRow ? nullNameRow.n : 0) / total;
+  if (nullNameRatio >= 0.8) {
+    warnings.push(
+      `CRITICAL: ${Math.round(nullNameRatio * 100)}% of products have no name (${nullNameRow.n}/${total}). ` +
+      'Price crawler may not have run after the sitemap crawl.'
+    );
+  }
+
+  // Most-common name covering > 80% of named rows
+  const dominantRow = db.prepare(`
+    SELECT name, COUNT(*) AS n FROM products
+    WHERE isActive = 1 AND name IS NOT NULL
+    GROUP BY name ORDER BY n DESC LIMIT 1
+  `).get();
+  if (dominantRow && dominantRow.n / total >= 0.8) {
+    warnings.push(
+      `WARNING: Name "${dominantRow.name}" appears in ${dominantRow.n}/${total} products (>80%). ` +
+      'This may indicate a scraper selector issue.'
+    );
+  }
+
+  return { ok: warnings.length === 0, warnings };
+}
+
+/**
  * Exports the SQLite database to a ZIP file at DB_ZIP_PATH.
  * The ZIP contains a single file named "prices.db".
  * @returns {void}
@@ -313,6 +394,8 @@ module.exports = {
   getPriceHistory,
   getProductByUrl,
   getAllProductUrls,
+  getStaleProductUrls,
+  validateDatabaseIntegrity,
   exportDatabaseToZip,
   closeDatabase,
 };

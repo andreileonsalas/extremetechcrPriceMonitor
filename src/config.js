@@ -10,13 +10,16 @@
 const SITEMAP_URL = 'https://extremetechcr.com/sitemap.xml';
 
 /** @type {number} Maximum concurrent HTTP requests */
-const CONCURRENT_REQUESTS = 10;
+const CONCURRENT_REQUESTS = 3;
 
 /** @type {number} Delay in milliseconds between request batches */
-const REQUEST_DELAY_MS = 5000;
+const REQUEST_DELAY_MS = 1000;
 
 /** @type {number} HTTP request timeout in milliseconds */
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 15000;
+
+/** @type {number} Maximum number of URLs to process per price-update run (rotates stale-first) */
+const MAX_URLS_PER_RUN = 500;
 
 /** @type {string} Path to the SQLite database file */
 const DB_PATH = './data/prices.db';
@@ -85,6 +88,7 @@ module.exports = {
   CONCURRENT_REQUESTS,
   REQUEST_DELAY_MS,
   REQUEST_TIMEOUT_MS,
+  MAX_URLS_PER_RUN,
   DB_PATH,
   DB_ZIP_PATH,
   USER_AGENT,

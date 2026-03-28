@@ -172,4 +172,122 @@ describe('database', () => {
       expect(urls).toContain('https://extremetechcr.com/producto/b');
     });
   });
+
+  describe('getStaleProductUrls', () => {
+    test('returns URLs ordered by lastCheckedAt ascending (stale first)', () => {
+      // Insert two products manually with different lastCheckedAt values
+      const dbInstance = db.openDatabase();
+      dbInstance.prepare(`
+        INSERT INTO products (url, name, firstSeenAt, lastCheckedAt, isActive)
+        VALUES (?, ?, ?, ?, 1)
+      `).run('https://extremetechcr.com/producto/old', 'Old', '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z');
+      dbInstance.prepare(`
+        INSERT INTO products (url, name, firstSeenAt, lastCheckedAt, isActive)
+        VALUES (?, ?, ?, ?, 1)
+      `).run('https://extremetechcr.com/producto/new', 'New', '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z');
+
+      const urls = db.getStaleProductUrls(10);
+      expect(urls[0]).toBe('https://extremetechcr.com/producto/old');
+      expect(urls[1]).toBe('https://extremetechcr.com/producto/new');
+    });
+
+    test('respects the limit parameter', () => {
+      for (let i = 0; i < 5; i++) {
+        db.upsertProduct({
+          url: `https://extremetechcr.com/producto/p${i}`,
+          name: `Product ${i}`,
+          sku: null, category: null, description: null, imageUrl: null,
+          stockLocations: [], isAvailable: true,
+        });
+      }
+      const urls = db.getStaleProductUrls(3);
+      expect(urls.length).toBe(3);
+    });
+
+    test('excludes inactive products', () => {
+      db.upsertProduct({
+        url: 'https://extremetechcr.com/producto/active',
+        name: 'Active', sku: null, category: null, description: null,
+        imageUrl: null, stockLocations: [], isAvailable: true,
+      });
+      db.upsertProduct({
+        url: 'https://extremetechcr.com/producto/inactive',
+        name: 'Inactive', sku: null, category: null, description: null,
+        imageUrl: null, stockLocations: [], isAvailable: false,
+      });
+      db.markProductInactive('https://extremetechcr.com/producto/inactive');
+      const urls = db.getStaleProductUrls(100);
+      expect(urls).toContain('https://extremetechcr.com/producto/active');
+      expect(urls).not.toContain('https://extremetechcr.com/producto/inactive');
+    });
+  });
+
+  describe('validateDatabaseIntegrity', () => {
+    test('returns ok=true for empty database', () => {
+      const result = db.validateDatabaseIntegrity();
+      expect(result.ok).toBe(true);
+      expect(result.warnings).toHaveLength(0);
+    });
+
+    test('returns ok=true when all products have prices and names', () => {
+      for (let i = 0; i < 5; i++) {
+        const id = db.upsertProduct({
+          url: `https://extremetechcr.com/producto/p${i}`,
+          name: `Product ${i}`,
+          sku: null, category: null, description: null, imageUrl: null,
+          stockLocations: [], isAvailable: true,
+        });
+        db.recordPrice(id, 10000 + i * 1000, 'CRC');
+      }
+      const result = db.validateDatabaseIntegrity();
+      expect(result.ok).toBe(true);
+    });
+
+    test('returns CRITICAL warning when >80% of products have no price', () => {
+      // Insert 5 products, give price to only 1 (20% have price, 80% do not)
+      for (let i = 0; i < 5; i++) {
+        const id = db.upsertProduct({
+          url: `https://extremetechcr.com/producto/p${i}`,
+          name: `Product ${i}`,
+          sku: null, category: null, description: null, imageUrl: null,
+          stockLocations: [], isAvailable: true,
+        });
+        if (i === 0) db.recordPrice(id, 10000, 'CRC');
+      }
+      const result = db.validateDatabaseIntegrity();
+      expect(result.ok).toBe(false);
+      expect(result.warnings.some((w) => w.includes('no price'))).toBe(true);
+    });
+
+    test('returns CRITICAL warning when >80% of products have null name', () => {
+      // Insert 5 products, only 1 has a name
+      for (let i = 0; i < 5; i++) {
+        db.upsertProduct({
+          url: `https://extremetechcr.com/producto/p${i}`,
+          name: i === 0 ? 'Only Named Product' : null,
+          sku: null, category: null, description: null, imageUrl: null,
+          stockLocations: [], isAvailable: true,
+        });
+      }
+      const result = db.validateDatabaseIntegrity();
+      expect(result.ok).toBe(false);
+      expect(result.warnings.some((w) => w.includes('no name'))).toBe(true);
+    });
+
+    test('returns WARNING when one name dominates >80% of products', () => {
+      // Insert 5 products all with the same name (simulates selector bug)
+      for (let i = 0; i < 5; i++) {
+        const id = db.upsertProduct({
+          url: `https://extremetechcr.com/producto/p${i}`,
+          name: 'ExtremeTechCR',
+          sku: null, category: null, description: null, imageUrl: null,
+          stockLocations: [], isAvailable: true,
+        });
+        db.recordPrice(id, 10000, 'CRC');
+      }
+      const result = db.validateDatabaseIntegrity();
+      expect(result.ok).toBe(false);
+      expect(result.warnings.some((w) => w.includes('ExtremeTechCR'))).toBe(true);
+    });
+  });
 });
