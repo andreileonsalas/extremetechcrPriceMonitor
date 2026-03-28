@@ -1,0 +1,45 @@
+name: Daily Price Crawler
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  crawl-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Restore database from previous run
+        uses: actions/cache@v4
+        with:
+          path: data/prices.db
+          key: sqlite-db-${{ github.run_id }}
+          restore-keys: sqlite-db-
+
+      - name: Run price update job
+        run: npm run prices
+
+      - name: Commit and push database ZIP
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/db.zip
+          git diff --staged --quiet || git commit -m "chore: update db.zip from price crawl [skip ci]"
+          git push

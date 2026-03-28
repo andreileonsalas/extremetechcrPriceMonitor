@@ -1,0 +1,58 @@
+/* Price Monitor - main styles */
+
+body {
+  background-color: #f8f9fa;
+}
+
+.product-card {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.product-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.price-badge {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.product-img {
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  background: #fff;
+  padding: 8px;
+}
+
+.product-img-placeholder {
+  width: 100%;
+  height: 180px;
+  background: #e9ecef;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #adb5bd;
+  font-size: 0.85rem;
+}
+
+.discount-badge {
+  font-size: 0.75rem;
+  vertical-align: middle;
+}
+
+.stock-locations {
+  font-size: 0.72rem;
+  color: #6c757d;
+  padding-left: 0;
+}
+
+.stock-location-item {
+  margin-right: 4px;
+}
+
+.price-block {
+  line-height: 1.6;
+}
