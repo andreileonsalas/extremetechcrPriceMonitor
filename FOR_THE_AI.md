@@ -1,0 +1,242 @@
+# FOR_THE_AI.md — ExtremeTechCR Price Monitor: Full Context
+
+## WHAT THIS PROJECT DOES
+Monitors prices of products from https://extremetechcr.com (Costa Rican electronics store, WooCommerce).
+No backend server. Uses GitHub Actions + SQLite + GitHub Pages. Currency: CRC (₡, colón costarricense).
+
+## ARCHITECTURE (read this first when debugging)
+
+```
+GitHub Actions (schedule/manual)
+  └─ Weekly: sitemap-crawler.yml  →  src/jobs/updateSitemap.js
+  └─ Daily:  price-crawler.yml    →  src/jobs/updatePrices.js
+  └─ Manual: price-crawler-sample.yml (5 URLs, quick test)
+       Both jobs write to: data/prices.db (SQLite, cached between runs via actions/cache)
+       Both jobs export:   public/db.zip  (SQLite → ZIP, committed to repo)
+
+GitHub Pages (serves from root of main branch)
+  └─ index.html (root) → meta-refresh redirect to public/
+  └─ public/index.html → loads main.js
+  └─ public/main.js    → fetches db.zip, loads via sql.js in-browser, renders product cards
+  └─ public/db.zip     → SQLite inside ZIP (updated by Actions, committed to repo)
+```
+
+## KEY FILES
+
+| File | Purpose |
+|---|---|
+| `src/config.js` | ALL tunable constants — edit here first |
+| `src/scraper/browser.js` | Playwright+stealth browser, shared context (CF cookie persistence) |
+| `src/scraper/productScraper.js` | Cheerio HTML parser, WooCommerce selectors |
+| `src/scraper/sitemapReader.js` | sitemap.xml fetcher + URL filter |
+| `src/database/db.js` | SQLite CRUD, schema, integrity check |
+| `src/jobs/updateSitemap.js` | Weekly job: adds new URLs (name=null until priced) |
+| `src/jobs/updatePrices.js` | Daily job: scrapes + prices URLs, exports ZIP |
+| `public/main.js` | Frontend SPA (vanilla JS + sql.js + Chart.js) |
+| `scripts/seedDatabase.js` | One-time: build db.zip from curated seed data |
+| `experiments/cloudflare-bypass/` | Diagnostic probes for bot-detection |
+
+## CONFIG.JS VALUES (current)
+```js
+CONCURRENT_REQUESTS = 3      // parallel pages per batch (low = less CF detection)
+REQUEST_DELAY_MS    = 1000   // ms between batches
+REQUEST_TIMEOUT_MS  = 15000  // ms per page navigation
+MAX_URLS_PER_RUN    = 500    // max URLs processed per daily run (stale-first rotation)
+DB_PATH             = './data/prices.db'
+DB_ZIP_PATH         = './public/db.zip'
+SITEMAP_URL         = 'https://extremetechcr.com/sitemap.xml'
+```
+
+## DATABASE SCHEMA
+```sql
+products(id, url UNIQUE, name, sku, category, description, imageUrl, stockLocations TEXT/JSON,
+         firstSeenAt, lastCheckedAt, isActive INT)
+
+priceHistory(id, productId FK, price REAL, originalPrice REAL, currency TEXT,
+             startDate TEXT, endDate TEXT NULL)
+-- endDate=NULL means "current price"
+-- Same price on consecutive days: extends endDate (no new row)
+-- Price change: closes old row (endDate=now), inserts new row
+```
+
+## PRICE PARSING — Costa Rica uses dot as thousands separator
+```
+"₡375.000" → 375000   (allThreeDigits after dot = thousands)
+"₡375,000" → 375000   (comma, 3 digits after = thousands)
+"₡67.901"  → 67901
+Currency: ₡ / \u20a1 = CRC, $ = USD, € = EUR
+```
+
+## KNOWN SITE STRUCTURE (WooCommerce selectors)
+```
+Title:     h1.product_title, h1.entry-title
+Price:     .price .woocommerce-Price-amount
+Sale:      .price ins .woocommerce-Price-amount
+Original:  .price del .woocommerce-Price-amount
+SKU:       .sku
+Category:  .posted_in a
+Image:     .woocommerce-product-gallery__image img
+Stock:     .wc-stock-locations table tr → td[0]=location, td[1]="N en stock"
+Available: button.single_add_to_cart_button exists + no .out-of-stock
+IsProduct: body.single-product OR body.woocommerce-page OR [itemtype*="schema.org/Product"]
+```
+
+## CLOUDFLARE / BOT DETECTION
+
+**UNKNOWN if CF blocks or just slow.** Run the probe first:
+```bash
+node experiments/cloudflare-bypass/probe.js [url]
+# Writes experiments/cloudflare-bypass/results.md
+```
+
+**What each result means:**
+- `cf-ray` header → CF is definitely the proxy
+- `403/503` on raw HTTP, `200` on Playwright+stealth → CF JS challenge (stealth solves it)
+- All methods fail → GitHub Actions IP flagged (datacenter IP reputation)
+- All methods succeed → site is just slow, not CF-blocked
+
+**Bypass options (cheapest first):**
+1. Current: Playwright+stealth headless (already implemented) — free, works if IP not blocked
+2. Self-hosted runner at home → residential IP, bypasses IP-block — free, needs home server
+3. Cloudflare Workers `fetch()` — **DOES NOT WORK** for CF Bot Mgmt (server-side, no JS exec)
+4. Cloudflare Browser Rendering API (Workers Paid ~$5/mo) — real Chromium on CF edge, works
+5. Residential proxies (Bright Data, Oxylabs ~$15+/mo)
+6. Managed scraping APIs (ScrapingBee, Zyte ~$25-50/mo)
+
+**CF Worker proxy example:** `experiments/cloudflare-bypass/worker-browser-rendering.js`
+
+## JOBS EXPLAINED
+
+### Weekly Sitemap Crawler
+- Fetches sitemap.xml → filters `/producto/` URLs → upserts into DB with name=null
+- Products inserted here show NOTHING on the frontend until price crawler runs
+- Frontend filter: `INNER JOIN priceHistory` so unpriced products are hidden
+
+### Daily Price Crawler  
+- Calls `getStaleProductUrls(MAX_URLS_PER_RUN)` → products sorted by lastCheckedAt ASC
+- For each URL: scrapes via Playwright, upserts product, records price
+- Exports db.zip every 50 products (progress save in case of cancellation)
+- Runs `validateDatabaseIntegrity()` at end → logs CRITICAL warnings
+- Commits db.zip with `if: always()` so partial runs are preserved
+- Job timeout: 300 minutes (5 hours)
+
+### Sample Crawler (manual trigger only)
+- Uses env `PRICE_UPDATE_URLS` with 5 known URLs
+- Completes in ~5 minutes — use after any code change to verify scraper works
+- Trigger: Actions → "Sample Price Crawler (Quick Test)" → Run workflow
+
+## WORKFLOWS
+
+| Workflow | File | Trigger | Timeout |
+|---|---|---|---|
+| Weekly Sitemap Crawler | sitemap-crawler.yml | Mon 2am UTC + manual | default |
+| Daily Price Crawler | price-crawler.yml | 3am UTC + manual (with optional urls input) | 300min |
+| Sample Price Crawler | price-crawler-sample.yml | manual only | 30min |
+
+**workflow_dispatch inputs for price-crawler.yml:**
+```
+urls: "https://extremetechcr.com/producto/x/,https://extremetechcr.com/producto/y/"
+# Leave blank for normal stale-first run
+```
+
+## DATABASE PERSISTENCE ACROSS RUNS
+GitHub Actions **does not** persist files between runs by default.
+`data/prices.db` is cached using `actions/cache@v4` with key `sqlite-db-{run_id}` + restore from `sqlite-db-*`.
+`public/db.zip` is committed to the repo and is the persistent export.
+
+**If the cache is cold (new DB):** price crawler will insert products but they'll also exist via db.zip.
+**Recovery:** run `npm run seed` locally → commit `public/db.zip` to reset to known-good state.
+
+## SEED SCRIPT
+```bash
+npm run seed          # rebuilds public/db.zip from 15 curated known products
+git add public/db.zip
+git commit -m "chore: reset db.zip to seed data"
+git push
+```
+Products in seed: Lenovo IdeaPad Slim 3, Intel Pentium G6405, MSI MP225V, Razer Kraken, Logitech G502, Logitech G915, LG 27" 4K, Samsung 970 EVO, Corsair RM850x, Corsair DDR5 32GB, MSI RTX 4060, Sony WH-1000XM5, ASUS TUF F15, Ryzen 5 7600X, Lian Li O11 Dynamic.
+
+## INTEGRITY CHECK
+`db.validateDatabaseIntegrity()` — called automatically at end of each price crawl:
+- CRITICAL if ≥80% products have no open price record
+- CRITICAL if ≥80% products have null name  
+- WARNING if one name appears in ≥80% of products (selector broke)
+
+## FRONTEND BEHAVIOR
+- Loads `db.zip` → extracts `prices.db` → opens in sql.js (in-browser SQLite)
+- **Only shows products with an open price record** (INNER JOIN, not LEFT JOIN)
+- Image: shows real img if imageUrl stored; on error hides img and shows "View price history" placeholder
+- Clicking any card opens price history modal with Chart.js line chart
+- Pagination: 60 products per page, search, sort by name/price
+
+## TESTING
+
+```bash
+npm run test:unit   # jest — 103 tests, pure JS, no network
+npm run test:e2e    # playwright — 29 tests, runs local server on port 8080
+npm test            # both
+```
+
+**E2E creates its own db.zip** from seed data before each run (see `test.beforeAll` in frontend.test.js).
+**Do not** commit `public/db.zip` inside e2e tests — they overwrite it with test data.
+
+**Critical e2e tests (must always pass):**
+- Intel Pentium Gold G6405 (CPU1011) — price 39900 CRC
+- MSI PRO MP225V 22 100Hz (MT2736) — price 34900 CRC  
+- Razer Kraken Kitty Edition V2 Pro Rosa (HE6006) — sale 67901, original 69900, -3%
+
+## GITHUB PAGES URL
+- Root: https://andreileonsalas.github.io/extremetechcrPriceMonitor/
+- `index.html` at root does meta-refresh to `public/` (the actual app)
+- Assets referenced relative to `public/`: `vendor/`, `main.js`, `main.css`, `db.zip`
+
+## COMMON FAILURES & FIXES
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| All products show "Unknown" / "Price unavailable" | Sitemap ran but price crawler didn't | Run price crawler or `npm run seed` + commit db.zip |
+| Price crawler cancelled after 6h | Too many URLs or slow site | Already fixed: MAX_URLS_PER_RUN=500, timeout-minutes=300, if:always commit |
+| GitHub Pages shows 404 at root URL | index.html missing from root | Already fixed: root index.html with meta-refresh |
+| Images don't load | imageUrl null (not yet scraped) or hotlink block | Already fixed: onerror fallback to placeholder |
+| integrity check CRITICAL no price | <20% of products have been priced yet | Normal after fresh deploy; price crawler needs to run several times |
+| E2e tests fail with wrong product data | db.zip has wrong content | Tests recreate db.zip themselves; don't need to fix db.zip for tests |
+| CF challenge blocks requests | Playwright stealth not working or IP flagged | Run experiments/cloudflare-bypass/probe.js to diagnose |
+
+## PRICE FORMAT EDGE CASES
+```
+"₡375,000 I.V.A.I"  → cleaned "375,000..." → 375000  (I.V.A.I dots treated as thousands)
+"₡39.900"           → 39900  (allThreeDigits)
+"₡67.901"           → 67901  (allThreeDigits)
+"$99.99"            → 99.99  (2 decimal digits = decimal)
+"1.234,56"          → 1234.56 (European: last separator is comma = decimal)
+```
+
+## WHEN ADDING A NEW FEATURE — CHECKLIST
+1. Edit `src/config.js` for any new constants
+2. Edit the specific module (scraper/db/frontend)
+3. `npm run test:unit` must pass
+4. `npm run test:e2e` must pass (run `npm run seed` first if db.zip is stale)
+5. For scraper changes: trigger "Sample Price Crawler" workflow to verify on real site
+6. After confirming sample works: merge so daily crawler runs with real data
+
+## REPO LAYOUT
+```
+.github/workflows/          CI/CD workflows
+experiments/cloudflare-bypass/ Bot-detection probe + CF Worker example
+public/                     GitHub Pages static files (index.html, main.js, main.css, db.zip)
+scripts/                    serve.js (dev server), seedDatabase.js
+src/
+  config.js                 All constants
+  database/db.js            SQLite layer
+  jobs/updatePrices.js      Daily crawler job
+  jobs/updateSitemap.js     Weekly sitemap job
+  scraper/browser.js        Playwright browser
+  scraper/productScraper.js HTML parser
+  scraper/sitemapReader.js  Sitemap XML parser
+tests/
+  e2e/frontend.test.js      Playwright e2e (29 tests)
+  unit/db.test.js           DB + integrity (36 tests)
+  unit/productScraper.test.js Scraper parsing (56 tests)
+  unit/sitemapReader.test.js  Sitemap (11 tests)
+index.html                  Root redirect → public/
+```

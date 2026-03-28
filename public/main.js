@@ -85,7 +85,9 @@ async function loadDatabaseFromZip() {
    ========================================================= */
 
 /**
- * Queries all active products with their current (latest) price and stock info.
+ * Queries all active products that have been priced (have an open price record).
+ * Products inserted by the sitemap crawler but not yet scraped (price = null)
+ * are excluded so the UI never shows a wall of "(Unknown Product)" cards.
  * @returns {Array<Object>} Array of product row objects.
  */
 function queryAllProducts() {
@@ -93,7 +95,7 @@ function queryAllProducts() {
     SELECT p.id, p.url, p.name, p.sku, p.category, p.imageUrl, p.lastCheckedAt,
            p.stockLocations, ph.price, ph.originalPrice, ph.currency
     FROM products p
-    LEFT JOIN priceHistory ph ON ph.productId = p.id AND ph.endDate IS NULL
+    INNER JOIN priceHistory ph ON ph.productId = p.id AND ph.endDate IS NULL
     WHERE p.isActive = 1
     ORDER BY p.name ASC
   `);
@@ -203,6 +205,9 @@ function renderProducts(products) {
  * Builds the Bootstrap card HTML for a single product.
  * Shows a strikethrough original price and discount badge when on sale.
  * Shows per-store stock information when available.
+ * When no image URL is stored (sitemap-only products not yet scraped), or when
+ * the remote image fails to load, a placeholder prompting the user to click for
+ * price history is shown instead.
  * @param {Object} product - Product row object.
  * @returns {string} HTML string for the product card.
  */
@@ -210,8 +215,8 @@ function buildProductCardHtml(product) {
   const name = escapeHtml(product.name || UNKNOWN_PRODUCT_NAME);
   const category = product.category ? escapeHtml(product.category) : '';
   const imgHtml = product.imageUrl
-    ? `<img src="${escapeHtml(product.imageUrl)}" class="product-img" alt="${name}" loading="lazy" />`
-    : `<div class="product-img-placeholder">No image</div>`;
+    ? `<img src="${escapeHtml(product.imageUrl)}" class="product-img" alt="${name}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.classList.remove('d-none')" /><div class="product-img-placeholder d-none">View price history</div>`
+    : `<div class="product-img-placeholder">View price history</div>`;
 
   const priceHtml = buildPriceHtml(product);
   const stockHtml = buildStockHtml(product.stockLocations);

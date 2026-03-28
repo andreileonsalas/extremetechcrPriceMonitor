@@ -69,10 +69,10 @@ async function fetchPage(url) {
     if (title === 'Just a moment...') {
       await page.waitForNavigation({
         waitUntil: 'domcontentloaded',
-        timeout: 30000,
+        timeout: 15000,
       }).catch(() => {});
-      // Let the actual product page fully settle after the CF redirect.
-      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+      // Let the actual product page settle after the CF redirect.
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
     }
     return {
       html: await page.content(),
@@ -112,7 +112,7 @@ async function fetchText(url) {
       // CF challenge completes via a form-POST navigation; wait for it.
       await page.waitForNavigation({
         waitUntil: 'domcontentloaded',
-        timeout: 30000,
+        timeout: 15000,
       }).catch(() => {});
       // At this point cf_clearance is set; re-fetch the URL using the
       // browser's fetch() API so we get the raw XML text.
