@@ -38,10 +38,14 @@ GitHub Pages (serves from root of main branch)
 
 ## CONFIG.JS VALUES (current)
 ```js
-CONCURRENT_REQUESTS = 3      // parallel pages per batch (low = less CF detection)
-REQUEST_DELAY_MS    = 1000   // ms between batches
+CONCURRENT_REQUESTS = 5      // parallel pages per batch
+REQUEST_DELAY_MS    = 500    // ms between batches
 REQUEST_TIMEOUT_MS  = 15000  // ms per page navigation
-MAX_URLS_PER_RUN    = 500    // max URLs processed per daily run (stale-first rotation)
+MAX_URLS_PER_RUN    = 3500   // max URLs processed per daily run (stale-first rotation)
+                             // at ~1 min per 55 products → ~63 min per run, cycles every ~3.5 days
+NULL_PRICE_RETRY_ATTEMPTS         = 2
+NULL_PRICE_RETRY_BACKOFF_MULTIPLIER = 2   // exponential: 10s → 20s → 40s
+NULL_PRICE_FAIL_THRESHOLD         = 50   // max nulls before job fails (FAIL_ON_NULL_PRICE=true)
 DB_PATH             = './data/prices.db'
 DB_ZIP_PATH         = './public/db.zip'
 SITEMAP_URL         = 'https://extremetechcr.com/sitemap.xml'
@@ -67,12 +71,13 @@ priceHistory(id, productId FK, price REAL, originalPrice REAL, currency TEXT,
 Currency: ₡ / \u20a1 = CRC, $ = USD, € = EUR
 ```
 
-## KNOWN SITE STRUCTURE (WooCommerce selectors)
+## KNOWN SITE STRUCTURE (WooCommerce + Woodmart/Elementor theme)
 ```
 Title:     h1.product_title, h1.entry-title
-Price:     .price .woocommerce-Price-amount
-Sale:      .price ins .woocommerce-Price-amount
-Original:  .price del .woocommerce-Price-amount
+Price:     .wd-single-price .price .woocommerce-Price-amount   ← Woodmart/Elementor (this site)
+           .summary .price .woocommerce-Price-amount           ← standard WooCommerce (fallback)
+Sale:      .wd-single-price .price ins .woocommerce-Price-amount
+Original:  .wd-single-price .price del .woocommerce-Price-amount
 SKU:       .sku
 Category:  .posted_in a
 Image:     .woocommerce-product-gallery__image img
@@ -81,34 +86,32 @@ Available: button.single_add_to_cart_button exists + no .out-of-stock
 IsProduct: body.single-product OR body.woocommerce-page OR [itemtype*="schema.org/Product"]
 ```
 
+**NOTE:** The site does NOT use .summary/.entry-summary for the price block.
+The price is rendered inside a `.wd-single-price` Elementor widget.
+The `.summary`/`.entry-summary` selectors are kept as fallback for standard WooCommerce layouts.
+
 ## CLOUDFLARE / BOT DETECTION
 
-**UNKNOWN if CF blocks or just slow.** Run the probe first:
+**CONFIRMED: The site is NOT blocking scraper requests.** The root cause of null prices was a CSS selector mismatch — the site uses Woodmart/Elementor theme where prices are in `.wd-single-price`, not `.summary`/`.entry-summary`. This has been fixed.
+
+Cloudflare detection is still in place (`isCloudflareChallenge()` in productScraper.js) as a safety net:
+- Checks for `challenges.cloudflare.com`, `cf-browser-verification`, `__cf_chl_f_tk`, `jschl-answer`
+- If detected: retried with exponential backoff, then skipped with `[CLOUDFLARE]` log tag
+- CF title detection in browser.js matches partial `'Just a moment'` + `'Attention Required! | Cloudflare'`
+
+**If CF blocking starts (probe first):**
 ```bash
 node experiments/cloudflare-bypass/probe.js [url]
 # Writes experiments/cloudflare-bypass/results.md
 ```
-
-**What each result means:**
-- `cf-ray` header → CF is definitely the proxy
-- `403/503` on raw HTTP, `200` on Playwright+stealth → CF JS challenge (stealth solves it)
-- All methods fail → GitHub Actions IP flagged (datacenter IP reputation)
-- All methods succeed → site is just slow, not CF-blocked
-
-**Bypass options (cheapest first):**
-1. Current: Playwright+stealth headless (already implemented) — free, works if IP not blocked
-2. Self-hosted runner at home → residential IP, bypasses IP-block — free, needs home server
-3. Cloudflare Workers `fetch()` — **DOES NOT WORK** for CF Bot Mgmt (server-side, no JS exec)
-4. Cloudflare Browser Rendering API (Workers Paid ~$5/mo) — real Chromium on CF edge, works
-5. Residential proxies (Bright Data, Oxylabs ~$15+/mo)
-6. Managed scraping APIs (ScrapingBee, Zyte ~$25-50/mo)
-
-**CF Worker proxy example:** `experiments/cloudflare-bypass/worker-browser-rendering.js`
+Bypass options (cheapest first): self-hosted runner (residential IP), CF Browser Rendering API (~$5/mo), residential proxies (~$15+/mo).
 
 ## JOBS EXPLAINED
 
 ### Weekly Sitemap Crawler
 - Fetches sitemap.xml → filters `/producto/` URLs → upserts into DB with name=null
+- New products get `lastCheckedAt = '1970-01-01T00:00:00.000Z'` (epoch) so they are treated as
+  the most stale and get scraped first in the next price-update run
 - Products inserted here show NOTHING on the frontend until price crawler runs
 - Frontend filter: `INNER JOIN priceHistory` so unpriced products are hidden
 
@@ -135,9 +138,11 @@ node experiments/cloudflare-bypass/probe.js [url]
 
 **workflow_dispatch inputs for price-crawler.yml:**
 ```
-urls: "https://extremetechcr.com/producto/x/,https://extremetechcr.com/producto/y/"
-# Leave blank for normal stale-first run
+urls:               "https://extremetechcr.com/producto/x/,..."  (leave blank for stale-first run)
+fail_on_null_price: "true" | "false"  (fail job if null prices exceed NULL_PRICE_FAIL_THRESHOLD)
 ```
+
+> All throughput settings (concurrency, delay, limit) are configured in `src/config.js`, not as workflow inputs.
 
 ## DATABASE PERSISTENCE ACROSS RUNS
 GitHub Actions **does not** persist files between runs by default.
@@ -172,7 +177,7 @@ Products in seed: Lenovo IdeaPad Slim 3, Intel Pentium G6405, MSI MP225V, Razer 
 ## TESTING
 
 ```bash
-npm run test:unit   # jest — 103 tests, pure JS, no network
+npm run test:unit   # jest — 134 tests, pure JS, no network
 npm run test:e2e    # playwright — 29 tests, runs local server on port 8080
 npm test            # both
 ```
@@ -195,7 +200,7 @@ npm test            # both
 | Symptom | Cause | Fix |
 |---|---|---|
 | All products show "Unknown" / "Price unavailable" | Sitemap ran but price crawler didn't | Run price crawler or `npm run seed` + commit db.zip |
-| Price crawler cancelled after 6h | Too many URLs or slow site | Already fixed: MAX_URLS_PER_RUN=500, timeout-minutes=300, if:always commit |
+| Price crawler cancelled after 6h | Too many URLs or slow site | Already fixed: MAX_URLS_PER_RUN=3500, timeout-minutes=300, if:always commit |
 | GitHub Pages shows 404 at root URL | index.html missing from root | Already fixed: root index.html with meta-refresh |
 | Images don't load | imageUrl null (not yet scraped) or hotlink block | Already fixed: onerror fallback to placeholder |
 | integrity check CRITICAL no price | <20% of products have been priced yet | Normal after fresh deploy; price crawler needs to run several times |

@@ -7,9 +7,11 @@
  * ALL CONFIGURATION IS AT THE TOP OF src/config.js - edit that file
  * to change: sitemap URL, concurrency, delay, timeouts, DB paths, selectors.
  *
- * Environment variables:
- *   PRICE_UPDATE_URLS  Comma-separated list of URLs to process instead of the
- *                      full database. Useful for quick one-off tests.
+ * Environment variables (workflow runtime controls, not configuration):
+ *   PRICE_UPDATE_URLS    Comma-separated list of URLs to process instead of the
+ *                        full database. Useful for quick one-off tests.
+ *   FAIL_ON_NULL_PRICE   Set to 'true' to fail the job when too many null prices
+ *                        are detected (threshold: NULL_PRICE_FAIL_THRESHOLD in config.js).
  */
 
 const { scrapeProduct } = require('../scraper/productScraper');
@@ -167,14 +169,10 @@ async function runPriceUpdate() {
 
   if (nullPriceCount > 0) {
     console.warn(`[NULL PRICES] ${nullPriceCount} product(s) had a null price in this run.`);
-    const envThreshold = parseInt(process.env.NULL_PRICE_FAIL_THRESHOLD, 10);
-    const threshold = !Number.isNaN(envThreshold) ? envThreshold : NULL_PRICE_FAIL_THRESHOLD;
-    if (process.env.FAIL_ON_NULL_PRICE === 'true' && nullPriceCount > threshold) {
+    if (process.env.FAIL_ON_NULL_PRICE === 'true' && nullPriceCount > NULL_PRICE_FAIL_THRESHOLD) {
       throw new Error(
-        `Job failed: ${nullPriceCount} null-price product(s) exceeded the allowed threshold of ${threshold}. ` +
-        `To allow null prices, set the workflow input 'fail_on_null_price' to 'false' or set the ` +
-        `FAIL_ON_NULL_PRICE environment variable to 'false'. ` +
-        `To raise the threshold, set NULL_PRICE_FAIL_THRESHOLD to a higher value.`
+        `Job failed: ${nullPriceCount} null-price product(s) exceeded the allowed threshold of ${NULL_PRICE_FAIL_THRESHOLD}. ` +
+        `To allow null prices, set the workflow input 'fail_on_null_price' to 'false'.`
       );
     }
   }
