@@ -154,6 +154,9 @@ function upsertProduct(productData) {
     return existing.id;
   }
 
+  // Use the Unix epoch as lastCheckedAt for new products so they are immediately
+  // treated as "most stale" by getStaleProductUrls and get processed first in the
+  // next price-update run, even if they were just discovered by the sitemap job.
   const result = db.prepare(`
     INSERT INTO products (url, name, sku, category, description, imageUrl, stockLocations, firstSeenAt, lastCheckedAt, isActive)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -166,7 +169,7 @@ function upsertProduct(productData) {
     productData.imageUrl,
     stockJson,
     now,
-    now,
+    '1970-01-01T00:00:00.000Z',
     1
   );
 

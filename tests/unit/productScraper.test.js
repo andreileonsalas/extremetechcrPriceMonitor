@@ -11,6 +11,8 @@ const {
   parseStockQuantity,
   parseStockLocationText,
   scrapeProductFromHtml,
+  buildHtmlDebug,
+  isCloudflareChallenge,
 } = require('../../src/scraper/productScraper');
 const { load } = require('cheerio');
 
@@ -121,6 +123,68 @@ const HTML_RAZER_KRAKEN = `
         <tr><td>Alajuela</td><td>1 en stock</td></tr>
         <tr><td>Heredia</td><td>3 en stock</td></tr>
       </table>
+    </div>
+  </div>
+</body>
+</html>`;
+
+/* =========================================================
+   FIXTURES — Woodmart / Elementor layout (real ExtremeTechCR theme)
+   Price lives in .wd-single-price widget, NOT in .summary/.entry-summary.
+   ========================================================= */
+
+/**
+ * Minimal Woodmart/Elementor product page for MSI MAG 274F monitor.
+ * Regular price ₡65,000 CRC (no sale) — comma is thousands separator.
+ */
+const HTML_WOODMART_REGULAR = `
+<!DOCTYPE html>
+<html>
+<head><title>MSI MAG 274F – 27" – IPS – 200 Hz » ExtremeTech</title></head>
+<body class="wp-singular product-template-default single single-product postid-164166 wp-theme-woodmart woocommerce woocommerce-page">
+  <div class="product">
+    <h1 class="product_title entry-title">MSI MAG 274F – 27" – IPS – 200 Hz</h1>
+    <div class="elementor-element wd-single-price text-left elementor">
+      <div class="elementor-widget-container">
+        <p class="price">
+          <span class="woocommerce-Price-amount amount">
+            <bdi><span class="woocommerce-Price-currencySymbol">&#8353;</span>65,000</bdi>
+          </span>
+          <small style="font-size:0.85em;color:#888;">I.V.A.I</small>
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+/**
+ * Minimal Woodmart/Elementor product page with a sale price.
+ * Original ₡375,000 CRC, sale ₡350,000 CRC.
+ */
+const HTML_WOODMART_SALE = `
+<!DOCTYPE html>
+<html>
+<head><title>Sale Product » ExtremeTech</title></head>
+<body class="single single-product woocommerce woocommerce-page wp-theme-woodmart">
+  <div class="product">
+    <span class="onsale">-7%</span>
+    <h1 class="product_title entry-title">Sale Product</h1>
+    <div class="elementor-element wd-single-price text-left elementor">
+      <div class="elementor-widget-container">
+        <p class="price">
+          <del>
+            <span class="woocommerce-Price-amount amount">
+              <bdi><span class="woocommerce-Price-currencySymbol">&#8353;</span>375,000</bdi>
+            </span>
+          </del>
+          <ins>
+            <span class="woocommerce-Price-amount amount">
+              <bdi><span class="woocommerce-Price-currencySymbol">&#8353;</span>350,000</bdi>
+            </span>
+          </ins>
+        </p>
+      </div>
     </div>
   </div>
 </body>
@@ -359,6 +423,174 @@ describe('productScraper', () => {
 
     test('returns null for unrecognized format', () => {
       expect(parseStockLocationText('No stock info')).toBeNull();
+    });
+  });
+
+  describe('isCloudflareChallenge', () => {
+    test('detects managed challenge via challenges.cloudflare.com script', () => {
+      const html = '<html><body><script src="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/orchestrate/managed/v1"></script></body></html>';
+      expect(isCloudflareChallenge(html)).toBe(true);
+    });
+
+    test('detects interactive challenge via cf-browser-verification', () => {
+      const html = '<html><body><div id="cf-browser-verification">Checking...</div></body></html>';
+      expect(isCloudflareChallenge(html)).toBe(true);
+    });
+
+    test('detects legacy JS challenge via __cf_chl_f_tk token', () => {
+      const html = '<html><body><script>var __cf_chl_f_tk="abc123";</script></body></html>';
+      expect(isCloudflareChallenge(html)).toBe(true);
+    });
+
+    test('detects legacy JS challenge via jschl-answer', () => {
+      const html = '<html><body><input id="jschl-answer" value="abc"/></body></html>';
+      expect(isCloudflareChallenge(html)).toBe(true);
+    });
+
+    test('returns false for a normal product page', () => {
+      expect(isCloudflareChallenge(HTML_WOODMART_REGULAR)).toBe(false);
+    });
+
+    test('scrapeProductFromHtml returns isCloudflarePage:true for CF challenge HTML', () => {
+      const cfHtml = '<html><head><title>Just a moment...</title></head><body><script src="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/orchestrate/managed/v1"></script></body></html>';
+      const result = scrapeProductFromHtml('https://extremetechcr.com/producto/test/', cfHtml);
+      expect(result.isCloudflarePage).toBe(true);
+      expect(result.isProduct).toBe(false);
+      expect(result.price).toBeNull();
+    });
+
+    test('scrapeProductFromHtml does NOT set isCloudflarePage for a normal product page', () => {
+      const result = scrapeProductFromHtml('https://extremetechcr.com/producto/test/', HTML_WOODMART_REGULAR);
+      expect(result.isCloudflarePage).toBeUndefined();
+      expect(result.isProduct).toBe(true);
+    });
+  });
+
+  describe('WOODMART/ELEMENTOR FIXTURE: regular price via .wd-single-price', () => {
+    let result;
+    beforeAll(() => {
+      result = scrapeProductFromHtml('https://extremetechcr.com/producto/msi-mag-274f-27-ips-200-hz/', HTML_WOODMART_REGULAR);
+    });
+
+    test('is recognized as a product page', () => {
+      expect(result.isProduct).toBe(true);
+    });
+
+    test('extracts price as 65000 (comma-thousands format ₡65,000)', () => {
+      expect(result.price).toBe(65000);
+    });
+
+    test('has no original price (not on sale)', () => {
+      expect(result.originalPrice).toBeNull();
+    });
+
+    test('extracts currency as CRC', () => {
+      expect(result.currency).toBe('CRC');
+    });
+
+    test('does not set htmlDebug (price was found)', () => {
+      expect(result.htmlDebug).toBeUndefined();
+    });
+  });
+
+  describe('WOODMART/ELEMENTOR FIXTURE: sale price via .wd-single-price', () => {
+    let result;
+    beforeAll(() => {
+      result = scrapeProductFromHtml('https://extremetechcr.com/producto/sale-product/', HTML_WOODMART_SALE);
+    });
+
+    test('is recognized as a product page', () => {
+      expect(result.isProduct).toBe(true);
+    });
+
+    test('extracts sale price as 350000', () => {
+      expect(result.price).toBe(350000);
+    });
+
+    test('extracts original (pre-sale) price as 375000', () => {
+      expect(result.originalPrice).toBe(375000);
+    });
+
+    test('extracts discount percentage as 7', () => {
+      expect(result.discountPercentage).toBe(7);
+    });
+
+    test('extracts currency as CRC', () => {
+      expect(result.currency).toBe('CRC');
+    });
+  });
+
+  describe('buildHtmlDebug', () => {
+    test('includes page title in output', () => {
+      const $ = load('<html><head><title>Test Product Page</title></head><body class="single-product"></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Page title: "Test Product Page"');
+    });
+
+    test('falls back to (no title) when title element is missing', () => {
+      const $ = load('<html><body class="single-product"></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Page title: "(no title)"');
+    });
+
+    test('reports true when .summary container is present', () => {
+      const $ = load('<html><body><div class="summary entry-summary"><p class="price"></p></div></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Has .summary/.entry-summary: true');
+    });
+
+    test('reports false when .summary container is absent', () => {
+      const $ = load('<html><body><div class="other"></div></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Has .summary/.entry-summary: false');
+    });
+
+    test('includes price container HTML when price container exists', () => {
+      const $ = load('<html><body><div class="summary entry-summary"><p class="price"><span>₡39.900</span></p></div></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Price container HTML:');
+      expect(debug).toContain('39.900');
+    });
+
+    test('reports (not found) for price container when absent', () => {
+      const $ = load('<html><body><div class="summary entry-summary"></div></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Price container HTML: (not found)');
+    });
+
+    test('includes body text snippet', () => {
+      const $ = load('<html><head><title>Just a moment...</title></head><body>Cloudflare challenge text here</body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Body text snippet:');
+      expect(debug).toContain('Cloudflare challenge text here');
+    });
+
+    test('attaches htmlDebug to scrapeProductFromHtml result when price is null', () => {
+      const nopriceHtml = `
+        <!DOCTYPE html>
+        <html><head><title>Product Page</title></head>
+        <body class="single-product woocommerce-page">
+          <div class="product" itemscope itemtype="https://schema.org/Product">
+            <h1 class="product_title entry-title">No Price Product</h1>
+            <div class="summary entry-summary">
+              <!-- no price element -->
+            </div>
+          </div>
+        </body></html>`;
+      const result = scrapeProductFromHtml('https://example.com/producto/test/', nopriceHtml);
+      expect(result.price).toBeNull();
+      expect(result.htmlDebug).toBeDefined();
+      expect(result.htmlDebug).toContain('Page title: "Product Page"');
+      expect(result.htmlDebug).toContain('Has .summary/.entry-summary: true');
+    });
+
+    test('does not attach htmlDebug when price is found', () => {
+      const result = scrapeProductFromHtml(
+        'https://extremetechcr.com/producto/intel-pentium-gold-g6405/',
+        HTML_PENTIUM_G6405
+      );
+      expect(result.price).not.toBeNull();
+      expect(result.htmlDebug).toBeUndefined();
     });
   });
 

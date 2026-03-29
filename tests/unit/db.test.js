@@ -33,6 +33,49 @@ afterEach(() => {
 
 describe('database', () => {
   describe('upsertProduct', () => {
+    test('new product gets lastCheckedAt set to epoch so it is immediately stale', () => {
+      db.upsertProduct({
+        url: 'https://extremetechcr.com/producto/brand-new',
+        name: null,
+        sku: null,
+        category: null,
+        description: null,
+        imageUrl: null,
+        isAvailable: true,
+      });
+      const product = db.getProductByUrl('https://extremetechcr.com/producto/brand-new');
+      expect(product.lastCheckedAt).toBe('1970-01-01T00:00:00.000Z');
+    });
+
+    test('updating an existing product sets lastCheckedAt to now (not epoch)', () => {
+      const before = new Date().toISOString();
+      db.upsertProduct({ url: 'https://extremetechcr.com/producto/existing', name: 'Old', sku: null, category: null, description: null, imageUrl: null, isAvailable: true });
+      // Second call simulates a price-scrape update
+      db.upsertProduct({ url: 'https://extremetechcr.com/producto/existing', name: 'Updated', sku: null, category: null, description: null, imageUrl: null, isAvailable: true });
+      const after = new Date().toISOString();
+      const product = db.getProductByUrl('https://extremetechcr.com/producto/existing');
+      expect(product.lastCheckedAt >= before).toBe(true);
+      expect(product.lastCheckedAt <= after).toBe(true);
+    });
+
+    test('new products from sitemap are stale-first vs already-scraped products', () => {
+      // Simulate sitemap inserting a new URL (epoch lastCheckedAt)
+      db.upsertProduct({ url: 'https://extremetechcr.com/producto/sitemap-new', name: null, sku: null, category: null, description: null, imageUrl: null, isAvailable: true });
+      // Simulate price crawler already having scraped another URL (recent lastCheckedAt)
+      const dbInstance = db.openDatabase();
+      dbInstance.prepare(
+        `INSERT INTO products (url, name, firstSeenAt, lastCheckedAt, isActive) VALUES (?, ?, ?, ?, 1)`
+      ).run('https://extremetechcr.com/producto/already-scraped', 'Scraped', '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z');
+
+      const urls = db.getStaleProductUrls(10);
+      // The new sitemap product (epoch 1970) must come before the already-scraped one (2024)
+      const newIdx = urls.indexOf('https://extremetechcr.com/producto/sitemap-new');
+      const scrapedIdx = urls.indexOf('https://extremetechcr.com/producto/already-scraped');
+      expect(newIdx).toBeGreaterThanOrEqual(0);
+      expect(scrapedIdx).toBeGreaterThanOrEqual(0);
+      expect(newIdx).toBeLessThan(scrapedIdx);
+    });
+
     test('inserts a new product and returns an ID', () => {
       const id = db.upsertProduct({
         url: 'https://extremetechcr.com/producto/laptop-test',

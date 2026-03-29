@@ -2,30 +2,42 @@
 
 /**
  * Central configuration file.
- * All configurable values for the price monitor are defined here.
- * Modify this file to change behavior without touching job logic.
+ * ALL configurable values for the price monitor are defined here.
+ * Edit this file to change any behavior — no environment variables needed.
  */
 
 /** @type {string} URL of the WooCommerce sitemap index */
 const SITEMAP_URL = 'https://extremetechcr.com/sitemap.xml';
 
-/** @type {number} Maximum concurrent HTTP requests */
-const CONCURRENT_REQUESTS = 3;
+/** @type {number} Maximum concurrent browser pages used when scraping */
+const CONCURRENT_REQUESTS = 5;
 
 /** @type {number} Delay in milliseconds between request batches */
-const REQUEST_DELAY_MS = 1000;
+const REQUEST_DELAY_MS = 500;
 
 /** @type {number} HTTP request timeout in milliseconds */
 const REQUEST_TIMEOUT_MS = 15000;
 
 /** @type {number} Maximum number of URLs to process per price-update run (rotates stale-first) */
-const MAX_URLS_PER_RUN = 500;
+const MAX_URLS_PER_RUN = 3500;
 
 /** @type {number} Number of times to retry scraping a product whose price came back null (0 = no retries) */
 const NULL_PRICE_RETRY_ATTEMPTS = 2;
 
-/** @type {number} Milliseconds to wait between null-price retry attempts */
+/** @type {number} Base milliseconds to wait before the first retry (exponential backoff applies for subsequent attempts) */
 const NULL_PRICE_RETRY_DELAY_MS = 10000;
+
+/**
+ * Exponential-backoff multiplier applied to the retry delay on each successive attempt.
+ * The wait before attempt N is: NULL_PRICE_RETRY_DELAY_MS * (NULL_PRICE_RETRY_BACKOFF_MULTIPLIER ^ (N-1))
+ * Examples with base=10 s and multiplier=2: attempt 1 → 10 s, attempt 2 → 20 s, attempt 3 → 40 s.
+ * Set to 1 to disable backoff (constant delay).
+ * @type {number}
+ */
+const NULL_PRICE_RETRY_BACKOFF_MULTIPLIER = 2;
+
+/** @type {number} How many null-price products are allowed before the job fails (when FAIL_ON_NULL_PRICE is true). 0 = fail on any single null price. */
+const NULL_PRICE_FAIL_THRESHOLD = 50;
 
 /** @type {string} Path to the SQLite database file */
 const DB_PATH = './data/prices.db';
@@ -58,26 +70,38 @@ const SELECTOR_PRODUCT_TITLE = 'h1.product_title, h1.entry-title';
 
 /** @type {string} CSS selector for the active (sale) price inside an <ins> element */
 const SELECTOR_PRODUCT_SALE_PRICE = [
+  // Standard WooCommerce layout (summary sidebar)
   '.summary .price ins .woocommerce-Price-amount',
   '.entry-summary .price ins .woocommerce-Price-amount',
   '.summary .price ins .amount',
   '.entry-summary .price ins .amount',
+  // Woodmart / Elementor theme — price rendered via .wd-single-price widget
+  '.wd-single-price .price ins .woocommerce-Price-amount',
+  '.wd-single-price .price ins .amount',
 ].join(', ');
 
 /** @type {string} CSS selector for any price amount (fallback when no sale price) */
 const SELECTOR_PRODUCT_PRICE = [
+  // Standard WooCommerce layout
   '.summary .price .woocommerce-Price-amount',
   '.entry-summary .price .woocommerce-Price-amount',
   '.summary .price .amount',
   '.entry-summary .price .amount',
+  // Woodmart / Elementor theme
+  '.wd-single-price .price .woocommerce-Price-amount',
+  '.wd-single-price .price .amount',
 ].join(', ');
 
 /** @type {string} CSS selector for the original (struck-through) price inside a <del> element */
 const SELECTOR_PRODUCT_ORIGINAL_PRICE = [
+  // Standard WooCommerce layout
   '.summary .price del .woocommerce-Price-amount',
   '.entry-summary .price del .woocommerce-Price-amount',
   '.summary .price del .amount',
   '.entry-summary .price del .amount',
+  // Woodmart / Elementor theme
+  '.wd-single-price .price del .woocommerce-Price-amount',
+  '.wd-single-price .price del .amount',
 ].join(', ');
 
 /** @type {string} CSS selector for the on-sale badge showing the discount percentage */
@@ -118,6 +142,8 @@ module.exports = {
   MAX_URLS_PER_RUN,
   NULL_PRICE_RETRY_ATTEMPTS,
   NULL_PRICE_RETRY_DELAY_MS,
+  NULL_PRICE_RETRY_BACKOFF_MULTIPLIER,
+  NULL_PRICE_FAIL_THRESHOLD,
   DB_PATH,
   DB_ZIP_PATH,
   USER_AGENT,

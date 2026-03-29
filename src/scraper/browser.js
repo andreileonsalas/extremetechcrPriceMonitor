@@ -61,12 +61,11 @@ async function fetchPage(url) {
       waitUntil: 'domcontentloaded',
       timeout: REQUEST_TIMEOUT_MS,
     });
-    // If Cloudflare shows a "Just a moment..." challenge page, its orchestration
-    // script solves the challenge and then submits a hidden form POST, which
-    // triggers a real browser navigation back to the original URL.
-    // We wait for that navigation here so we end up with the real page.
+    // Detect Cloudflare challenge pages. CF uses a few title variants; check
+    // for all known patterns rather than an exact match.
     const title = await page.title().catch(() => '');
-    if (title === 'Just a moment...') {
+    const isCFChallenge = title.includes('Just a moment') || title === 'Attention Required! | Cloudflare';
+    if (isCFChallenge) {
       await page.waitForNavigation({
         waitUntil: 'domcontentloaded',
         timeout: 15000,
@@ -108,7 +107,8 @@ async function fetchText(url) {
     });
     // Check whether we hit a CF challenge page.
     const title = await page.title().catch(() => '');
-    if (title === 'Just a moment...') {
+    const isCFChallenge = title.includes('Just a moment') || title === 'Attention Required! | Cloudflare';
+    if (isCFChallenge) {
       // CF challenge completes via a form-POST navigation; wait for it.
       await page.waitForNavigation({
         waitUntil: 'domcontentloaded',
