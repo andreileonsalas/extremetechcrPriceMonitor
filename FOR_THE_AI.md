@@ -8,16 +8,18 @@ No backend server. Uses GitHub Actions + SQLite + GitHub Pages. Currency: CRC (�
 
 ```
 GitHub Actions (schedule/manual)
-  └─ Weekly: sitemap-crawler.yml  →  src/jobs/updateSitemap.js
-  └─ Daily:  price-crawler.yml    →  src/jobs/updatePrices.js
-  └─ Manual: price-crawler-sample.yml (5 URLs, quick test)
-       Both jobs write to: data/prices.db (SQLite, cached between runs via actions/cache)
-       Both jobs export:   public/db.zip  (SQLite → ZIP, committed to repo)
+  └─ Weekly (Mon 2am): sitemap-crawler.yml     →  src/jobs/updateSitemap.js
+  └─ Daily  (3am):     price-crawler.yml       →  src/jobs/updatePrices.js
+  └─ Weekly (Thu 1am): price-crawler-weekly-db.yml → src/jobs/updatePrices.js (INCLUDE_INACTIVE=true)
+  └─ Manual:           price-crawler-sample.yml (5 URLs, quick test)
+       All jobs write to: data/prices.db (SQLite, cached between runs via actions/cache)
+       All jobs export:   public/db.zip  (SQLite → ZIP, committed to repo)
 
 GitHub Pages (serves from root of main branch)
   └─ index.html (root) → meta-refresh redirect to public/
   └─ public/index.html → loads main.js
   └─ public/main.js    → fetches db.zip, loads via sql.js in-browser, renders product cards
+                          + mini 7-day sparkline charts below each product image
   └─ public/db.zip     → SQLite inside ZIP (updated by Actions, committed to repo)
 ```
 
@@ -26,23 +28,26 @@ GitHub Pages (serves from root of main branch)
 | File | Purpose |
 |---|---|
 | `src/config.js` | ALL tunable constants — edit here first |
-| `src/scraper/browser.js` | Playwright+stealth browser, shared context (CF cookie persistence) |
+| `src/scraper/httpFetcher.js` | Plain HTTP fetcher using axios (default, fast) |
+| `src/scraper/browser.js` | Routes to httpFetcher or Playwright based on USE_HTTP_FETCHER flag |
 | `src/scraper/productScraper.js` | Cheerio HTML parser, WooCommerce selectors |
 | `src/scraper/sitemapReader.js` | sitemap.xml fetcher + URL filter |
 | `src/database/db.js` | SQLite CRUD, schema, integrity check |
 | `src/jobs/updateSitemap.js` | Weekly job: adds new URLs (name=null until priced) |
-| `src/jobs/updatePrices.js` | Daily job: scrapes + prices URLs, exports ZIP |
-| `public/main.js` | Frontend SPA (vanilla JS + sql.js + Chart.js) |
+| `src/jobs/updatePrices.js` | Daily + weekly job: scrapes + prices URLs, exports ZIP |
+| `public/main.js` | Frontend SPA (vanilla JS + sql.js + Chart.js + mini sparklines) |
 | `scripts/seedDatabase.js` | One-time: build db.zip from curated seed data |
 | `experiments/cloudflare-bypass/` | Diagnostic probes for bot-detection |
 
 ## CONFIG.JS VALUES (current)
 ```js
-CONCURRENT_REQUESTS = 5      // parallel pages per batch
-REQUEST_DELAY_MS    = 500    // ms between batches
-REQUEST_TIMEOUT_MS  = 15000  // ms per page navigation
-MAX_URLS_PER_RUN    = 3500   // max URLs processed per daily run (stale-first rotation)
-                             // at ~1 min per 55 products → ~63 min per run, cycles every ~3.5 days
+USE_HTTP_FETCHER = true      // use plain HTTP (axios) instead of Playwright browser
+                              // set false if Cloudflare starts blocking HTTP requests
+CONCURRENT_REQUESTS = 10     // parallel requests per batch
+REQUEST_DELAY_MS    = 1000   // ms between batches (polite gap for HTTP)
+REQUEST_TIMEOUT_MS  = 15000  // ms per request
+MAX_URLS_PER_RUN    = 10000  // max URLs processed per run (covers full catalogue daily)
+                              // with HTTP at ~600/min → 3500 products in ~6 min
 NULL_PRICE_RETRY_ATTEMPTS         = 2
 NULL_PRICE_RETRY_BACKOFF_MULTIPLIER = 2   // exponential: 10s → 20s → 40s
 NULL_PRICE_FAIL_THRESHOLD         = 50   // max nulls before job fails (FAIL_ON_NULL_PRICE=true)
@@ -50,6 +55,16 @@ DB_PATH             = './data/prices.db'
 DB_ZIP_PATH         = './public/db.zip'
 SITEMAP_URL         = 'https://extremetechcr.com/sitemap.xml'
 ```
+
+## SPEED / CRAWLER THROUGHPUT
+With USE_HTTP_FETCHER=true (default):
+- HTTP request time per product: ~200–400 ms (no browser overhead)
+- CONCURRENT_REQUESTS=10 + REQUEST_DELAY_MS=1000 → ~10 products / 1.4 s ≈ 430 products/min
+- 3500 active products → ~8 min per daily run
+- Set USE_HTTP_FETCHER=false to revert to Playwright (~62 products/min, ~56 min for 3500 URLs)
+
+To switch back to Playwright (if CF blocking starts): set USE_HTTP_FETCHER=false in src/config.js.
+Diagnose first: `node experiments/cloudflare-bypass/probe.js [url]`
 
 ## DATABASE SCHEMA
 ```sql
@@ -108,20 +123,29 @@ Bypass options (cheapest first): self-hosted runner (residential IP), CF Browser
 
 ## JOBS EXPLAINED
 
-### Weekly Sitemap Crawler
+### Weekly Sitemap Crawler (Monday 2am UTC)
 - Fetches sitemap.xml → filters `/producto/` URLs → upserts into DB with name=null
 - New products get `lastCheckedAt = '1970-01-01T00:00:00.000Z'` (epoch) so they are treated as
   the most stale and get scraped first in the next price-update run
 - Products inserted here show NOTHING on the frontend until price crawler runs
 - Frontend filter: `INNER JOIN priceHistory` so unpriced products are hidden
 
-### Daily Price Crawler  
-- Calls `getStaleProductUrls(MAX_URLS_PER_RUN)` → products sorted by lastCheckedAt ASC
-- For each URL: scrapes via Playwright, upserts product, records price
+### Daily Price Crawler (every day 3am UTC)
+- Calls `getStaleProductUrls(MAX_URLS_PER_RUN, false)` → **active products only** (isActive=1), stale-first
+- Uses HTTP fetcher (axios) by default — no Playwright browser launched
+- For each URL: scrapes via HTTP, upserts product, records price
+- 404 responses → `markProductInactive(url)` — product removed from the daily queue
 - Exports db.zip every 50 products (progress save in case of cancellation)
 - Runs `validateDatabaseIntegrity()` at end → logs CRITICAL warnings
 - Commits db.zip with `if: always()` so partial runs are preserved
 - Job timeout: 300 minutes (5 hours)
+
+### Weekly Full-Database Price Review (Thursday 1am UTC)  — NEW
+- Sets env `INCLUDE_INACTIVE=true` → calls `getStaleProductUrls(MAX_URLS_PER_RUN, true)`
+- Includes **all** products (active AND inactive) — detects if 404 products were re-listed
+- Re-activates previously-inactive products if they return a valid page
+- Same HTTP fetcher as daily job; runs before the daily job (1am vs 3am)
+- Does NOT overlap with sitemap crawl (Monday vs Thursday)
 
 ### Sample Crawler (manual trigger only)
 - Uses env `PRICE_UPDATE_URLS` with 5 known URLs
@@ -133,13 +157,21 @@ Bypass options (cheapest first): self-hosted runner (residential IP), CF Browser
 | Workflow | File | Trigger | Timeout |
 |---|---|---|---|
 | Weekly Sitemap Crawler | sitemap-crawler.yml | Mon 2am UTC + manual | default |
-| Daily Price Crawler | price-crawler.yml | 3am UTC + manual (with optional urls input) | 300min |
+| Daily Price Crawler | price-crawler.yml | Every day 3am UTC + manual | 300min |
+| Weekly DB Review | price-crawler-weekly-db.yml | Thu 1am UTC + manual | 300min |
 | Sample Price Crawler | price-crawler-sample.yml | manual only | 30min |
 
 **workflow_dispatch inputs for price-crawler.yml:**
 ```
 urls:               "https://extremetechcr.com/producto/x/,..."  (leave blank for stale-first run)
 fail_on_null_price: "true" | "false"  (fail job if null prices exceed NULL_PRICE_FAIL_THRESHOLD)
+```
+
+**env vars consumed by src/jobs/updatePrices.js:**
+```
+PRICE_UPDATE_URLS   comma-separated override list (skips DB selection entirely)
+FAIL_ON_NULL_PRICE  "true" | "false"
+INCLUDE_INACTIVE    "true" → also process isActive=0 products (used by weekly DB review)
 ```
 
 > All throughput settings (concurrency, delay, limit) are configured in `src/config.js`, not as workflow inputs.

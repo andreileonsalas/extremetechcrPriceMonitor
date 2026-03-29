@@ -2,7 +2,8 @@
 
 const { chromium } = require('playwright-extra');
 const stealth = require('puppeteer-extra-plugin-stealth');
-const { REQUEST_TIMEOUT_MS } = require('../config');
+const { REQUEST_TIMEOUT_MS, USE_HTTP_FETCHER } = require('../config');
+const { fetchPageHttp, fetchTextHttp, closeHttpClient } = require('./httpFetcher');
 
 // Apply all stealth patches so Cloudflare's bot detection does not block the browser.
 chromium.use(stealth());
@@ -12,6 +13,50 @@ let browserInstance = null;
 
 /** @type {import('playwright-extra').BrowserContext|null} */
 let contextInstance = null;
+
+/**
+ * Fetches an HTML page, automatically choosing between a plain HTTP request
+ * (fast, USE_HTTP_FETCHER=true) and a stealth Playwright browser
+ * (USE_HTTP_FETCHER=false, for when the site starts blocking HTTP).
+ *
+ * @param {string} url - The product or page URL to fetch.
+ * @returns {Promise<{html: string, statusCode: number}>} Rendered HTML and HTTP status.
+ */
+async function fetchPage(url) {
+  if (USE_HTTP_FETCHER) {
+    return fetchPageHttp(url);
+  }
+  return fetchPagePlaywright(url);
+}
+
+/**
+ * Fetches raw text from a URL (used for XML sitemaps), choosing between
+ * plain HTTP and Playwright based on USE_HTTP_FETCHER.
+ *
+ * @param {string} url - The sitemap or XML URL to fetch.
+ * @returns {Promise<string>} Raw response text.
+ */
+async function fetchText(url) {
+  if (USE_HTTP_FETCHER) {
+    return fetchTextHttp(url);
+  }
+  return fetchTextPlaywright(url);
+}
+
+/**
+ * Closes the underlying transport (Playwright browser or HTTP client no-op).
+ * @returns {Promise<void>}
+ */
+async function closeBrowser() {
+  if (USE_HTTP_FETCHER) {
+    return closeHttpClient();
+  }
+  return closeBrowserPlaywright();
+}
+
+/* ------------------------------------------------------------------
+   Playwright implementations (used when USE_HTTP_FETCHER = false)
+   ------------------------------------------------------------------ */
 
 /**
  * Returns a shared stealth Chromium browser context, launching the browser if
@@ -34,13 +79,14 @@ async function getBrowserContext() {
 }
 
 /**
+ * Playwright implementation of fetchPage.
  * Fetches an HTML page using a real browser, automatically handling
  * Cloudflare managed challenges before returning the rendered content.
  *
  * @param {string} url - The product or page URL to fetch.
  * @returns {Promise<{html: string, statusCode: number}>} Rendered HTML and HTTP status.
  */
-async function fetchPage(url) {
+async function fetchPagePlaywright(url) {
   const context = await getBrowserContext();
   const page = await context.newPage();
   // Track main-frame navigation responses so we end up with the final
@@ -83,6 +129,7 @@ async function fetchPage(url) {
 }
 
 /**
+ * Playwright implementation of fetchText.
  * Fetches raw text from a URL (used for XML sitemaps).
  *
  * With the stealth browser the Cloudflare challenge is typically bypassed and
@@ -97,7 +144,7 @@ async function fetchPage(url) {
  * @param {string} url - The sitemap or XML URL to fetch.
  * @returns {Promise<string>} Raw response text.
  */
-async function fetchText(url) {
+async function fetchTextPlaywright(url) {
   const context = await getBrowserContext();
   const page = await context.newPage();
   try {
@@ -133,12 +180,10 @@ async function fetchText(url) {
 }
 
 /**
- * Closes the shared browser instance.
- * Call this once all scraping for a job run is complete so that the
- * Node.js process can exit cleanly.
+ * Closes the shared Playwright browser instance.
  * @returns {Promise<void>}
  */
-async function closeBrowser() {
+async function closeBrowserPlaywright() {
   if (browserInstance) {
     await browserInstance.close();
     browserInstance = null;

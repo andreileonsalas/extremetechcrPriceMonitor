@@ -58,3 +58,18 @@ body {
 .price-block {
   line-height: 1.6;
 }
+
+/* Mini 7-day sparkline chart shown below each product image */
+.mini-chart-wrapper {
+  height: 56px;
+  background: #fff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+  padding: 0;
+  overflow: hidden;
+}
+
+.mini-chart-canvas {
+  display: block;
+  width: 100% !important;
+  height: 56px !important;
+}

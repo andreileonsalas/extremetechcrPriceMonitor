@@ -274,17 +274,21 @@ function getAllProductUrls() {
 }
 
 /**
- * Returns up to `limit` active product URLs ordered by lastCheckedAt ascending
- * (stale-first). This is used by the daily price-update job to process the
- * least-recently-checked products first and respect MAX_URLS_PER_RUN.
+ * Returns up to `limit` product URLs ordered by lastCheckedAt ascending
+ * (stale-first). This is used by the price-update jobs.
+ *
  * @param {number} limit - Maximum number of URLs to return.
+ * @param {boolean} [includeInactive=false] - When true, also includes products
+ *   marked inactive (isActive = 0), so the weekly review job can re-check them
+ *   and detect if they were re-listed on the store.
  * @returns {string[]} Array of product URLs, stale ones first.
  */
-function getStaleProductUrls(limit) {
+function getStaleProductUrls(limit, includeInactive = false) {
   const db = openDatabase();
-  return db.prepare(
-    'SELECT url FROM products WHERE isActive = 1 ORDER BY lastCheckedAt ASC LIMIT ?'
-  ).all(limit).map((r) => r.url);
+  const query = includeInactive
+    ? 'SELECT url FROM products ORDER BY lastCheckedAt ASC LIMIT ?'
+    : 'SELECT url FROM products WHERE isActive = 1 ORDER BY lastCheckedAt ASC LIMIT ?';
+  return db.prepare(query).all(limit).map((r) => r.url);
 }
 
 /**

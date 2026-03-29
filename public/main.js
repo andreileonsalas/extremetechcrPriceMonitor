@@ -50,6 +50,9 @@ let filterShowInStock = true;
 /** @type {boolean} Whether to show products with no stock */
 let filterShowOutOfStock = true;
 
+/** @type {Map<number, import('chart.js').Chart>} Mini sparkline chart instances keyed by product ID */
+const miniChartInstances = new Map();
+
 /* =========================================================
    INITIALIZATION
    ========================================================= */
@@ -304,6 +307,9 @@ function renderProducts(products) {
       openPriceModal(productId, name);
     });
   });
+
+  // Render 7-day mini sparklines below each product image
+  renderMiniCharts(shown);
 }
 
 /**
@@ -330,6 +336,9 @@ function buildProductCardHtml(product) {
          data-product-id="${product.id}"
          data-product-name="${escapeHtml(product.name || '')}">
       ${imgHtml}
+      <div class="mini-chart-wrapper">
+        <canvas class="mini-chart-canvas" data-product-id="${product.id}"></canvas>
+      </div>
       <div class="card-body">
         <h6 class="card-title">${name}</h6>
         ${category ? `<p class="card-text text-muted small mb-1">${category}</p>` : ''}
@@ -409,6 +418,77 @@ function buildStockHtml(stockLocationsJson) {
     .map((loc) => `<li class="list-inline-item stock-location-item">${escapeHtml(loc.location)}: ${loc.quantity}</li>`)
     .join('');
   return `<ul class="list-inline stock-locations mt-1 mb-0">${rows}</ul>`;
+}
+
+/**
+ * Renders 7-day mini sparkline charts for each product in the list.
+ * Charts are drawn on the `.mini-chart-canvas` elements already in the DOM.
+ * Any previous mini chart instances are destroyed first to prevent memory leaks.
+ * When a product has no price history in the last 7 days, the chart wrapper is
+ * hidden so it does not leave an empty gap on the card.
+ *
+ * Clicking the card still opens the full price-history modal as before.
+ *
+ * @param {Array<Object>} products - Products currently rendered on the page.
+ */
+function renderMiniCharts(products) {
+  // Destroy all previous mini chart instances
+  miniChartInstances.forEach((chart) => chart.destroy());
+  miniChartInstances.clear();
+
+  products.forEach((product) => {
+    const canvas = document.querySelector(
+      `.mini-chart-canvas[data-product-id="${product.id}"]`
+    );
+    if (!canvas) return;
+
+    const history = queryPriceHistory(product.id, 7);
+    if (!history.length) {
+      // No 7-day data: hide the wrapper so the card doesn't show an empty bar
+      const wrapper = canvas.parentElement;
+      if (wrapper) wrapper.classList.add('d-none');
+      return;
+    }
+
+    const { labels, prices } = buildChartData(history, 7);
+
+    const chart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          data: prices,
+          borderColor: '#0d6efd',
+          borderWidth: 1.5,
+          backgroundColor: 'rgba(13, 110, 253, 0.08)',
+          fill: true,
+          tension: 0.2,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => items[0].label,
+              label: (ctx) => `${CRC_SYMBOL} ${formatNumber(ctx.parsed.y)}`,
+            },
+          },
+        },
+        scales: {
+          x: { display: false },
+          y: { display: false },
+        },
+      },
+    });
+
+    miniChartInstances.set(product.id, chart);
+  });
 }
 
 /* =========================================================

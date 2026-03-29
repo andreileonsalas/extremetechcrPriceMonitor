@@ -263,6 +263,23 @@ describe('database', () => {
       expect(urls).toContain('https://extremetechcr.com/producto/active');
       expect(urls).not.toContain('https://extremetechcr.com/producto/inactive');
     });
+
+    test('includes inactive products when includeInactive=true', () => {
+      db.upsertProduct({
+        url: 'https://extremetechcr.com/producto/active2',
+        name: 'Active2', sku: null, category: null, description: null,
+        imageUrl: null, stockLocations: [], isAvailable: true,
+      });
+      db.upsertProduct({
+        url: 'https://extremetechcr.com/producto/inactive2',
+        name: 'Inactive2', sku: null, category: null, description: null,
+        imageUrl: null, stockLocations: [], isAvailable: false,
+      });
+      db.markProductInactive('https://extremetechcr.com/producto/inactive2');
+      const urls = db.getStaleProductUrls(100, true);
+      expect(urls).toContain('https://extremetechcr.com/producto/active2');
+      expect(urls).toContain('https://extremetechcr.com/producto/inactive2');
+    });
   });
 
   describe('validateDatabaseIntegrity', () => {
