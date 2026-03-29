@@ -44,14 +44,35 @@ const SKIP_URL_PATTERNS = [
 /** @type {string} CSS selector for the product title on WooCommerce pages */
 const SELECTOR_PRODUCT_TITLE = 'h1.product_title, h1.entry-title';
 
+/**
+ * Price selectors are scoped to .summary / .entry-summary (the main WooCommerce product
+ * info section) to avoid accidentally picking up prices from related products, upsell
+ * widgets, product add-ons, or mini-cart elements that also render .price elements.
+ */
+
 /** @type {string} CSS selector for the active (sale) price inside an <ins> element */
-const SELECTOR_PRODUCT_SALE_PRICE = '.price ins .woocommerce-Price-amount, .price ins .amount';
+const SELECTOR_PRODUCT_SALE_PRICE = [
+  '.summary .price ins .woocommerce-Price-amount',
+  '.entry-summary .price ins .woocommerce-Price-amount',
+  '.summary .price ins .amount',
+  '.entry-summary .price ins .amount',
+].join(', ');
 
 /** @type {string} CSS selector for any price amount (fallback when no sale price) */
-const SELECTOR_PRODUCT_PRICE = '.price .woocommerce-Price-amount, .price .amount';
+const SELECTOR_PRODUCT_PRICE = [
+  '.summary .price .woocommerce-Price-amount',
+  '.entry-summary .price .woocommerce-Price-amount',
+  '.summary .price .amount',
+  '.entry-summary .price .amount',
+].join(', ');
 
 /** @type {string} CSS selector for the original (struck-through) price inside a <del> element */
-const SELECTOR_PRODUCT_ORIGINAL_PRICE = '.price del .woocommerce-Price-amount, .price del .amount';
+const SELECTOR_PRODUCT_ORIGINAL_PRICE = [
+  '.summary .price del .woocommerce-Price-amount',
+  '.entry-summary .price del .woocommerce-Price-amount',
+  '.summary .price del .amount',
+  '.entry-summary .price del .amount',
+].join(', ');
 
 /** @type {string} CSS selector for the on-sale badge showing the discount percentage */
 const SELECTOR_DISCOUNT_BADGE = '.onsale, .woocommerce-badge--onsale, span.onsale';
@@ -72,13 +93,13 @@ const STOCK_LOCATION_SELECTORS = [
 ];
 
 /** @type {string} CSS selector for the product SKU */
-const SELECTOR_PRODUCT_SKU = '.sku';
+const SELECTOR_PRODUCT_SKU = '.summary .sku, .entry-summary .sku, .sku';
 
 /** @type {string} CSS selector for the product category */
-const SELECTOR_PRODUCT_CATEGORY = '.posted_in a, .product_meta .posted_in a';
+const SELECTOR_PRODUCT_CATEGORY = '.summary .posted_in a, .entry-summary .posted_in a, .summary .product_meta .posted_in a, .posted_in a, .product_meta .posted_in a';
 
-/** @type {string} CSS selector for the product image */
-const SELECTOR_PRODUCT_IMAGE = '.woocommerce-product-gallery__image img, .product img';
+/** @type {string} CSS selector for the product image — scoped to the WooCommerce gallery only */
+const SELECTOR_PRODUCT_IMAGE = '.woocommerce-product-gallery__image img';
 
 /** @type {string} CSS selector for the product description */
 const SELECTOR_PRODUCT_DESCRIPTION = '.woocommerce-product-details__short-description, .product-short-description';
