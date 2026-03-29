@@ -9,6 +9,14 @@ on:
         description: 'Optional: comma-separated product URLs to process (overrides DB stale-first selection)'
         required: false
         default: ''
+      fail_on_null_price:
+        description: 'Fail the job if any product has a null price'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 permissions:
   contents: write
@@ -42,6 +50,7 @@ jobs:
       - name: Run price update job
         env:
           PRICE_UPDATE_URLS: ${{ github.event.inputs.urls }}
+          FAIL_ON_NULL_PRICE: ${{ github.event.inputs.fail_on_null_price || 'false' }}
         run: npm run prices
 
       - name: Commit and push database ZIP

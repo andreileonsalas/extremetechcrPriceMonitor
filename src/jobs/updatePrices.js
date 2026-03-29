@@ -31,6 +31,9 @@ const EXPORT_INTERVAL = 50;
 /** Running count of successfully processed products in this run. */
 let processedCount = 0;
 
+/** Running count of products whose price could not be determined in this run. */
+let nullPriceCount = 0;
+
 /**
  * Processes a single product URL: scrapes it and updates the database.
  * Exports an intermediate db.zip snapshot every EXPORT_INTERVAL products so
@@ -55,6 +58,13 @@ async function processProductUrl(url) {
 
     const productId = upsertProduct(data);
     recordPrice(productId, data.price, data.currency, data.originalPrice);
+
+    if (data.price === null) {
+      nullPriceCount += 1;
+      const reason = data.priceDebug || 'unknown reason';
+      console.warn(`  [NULL PRICE] ${url} | Reason: ${reason}`);
+    }
+
     console.log(`Updated: ${url} | Price: ${data.price} ${data.currency}`);
 
     processedCount += 1;
@@ -112,6 +122,13 @@ async function runPriceUpdate() {
 
   await closeBrowser();
   console.log(`Price update job complete. Processed ${processedCount} products.`);
+
+  if (nullPriceCount > 0) {
+    console.warn(`[NULL PRICES] ${nullPriceCount} product(s) had a null price in this run.`);
+    if (process.env.FAIL_ON_NULL_PRICE === 'true') {
+      throw new Error(`Job failed: ${nullPriceCount} product(s) returned a null price. To allow null prices, set the workflow input 'fail_on_null_price' to 'false' or set the FAIL_ON_NULL_PRICE environment variable to 'false'.`);
+    }
+  }
 }
 
 // Run when executed directly
