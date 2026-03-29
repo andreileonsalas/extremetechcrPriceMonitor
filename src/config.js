@@ -51,12 +51,21 @@ const REQUEST_TIMEOUT_MS = 15000;
 
 /**
  * Maximum number of URLs to process per price-update run (stale-first).
- * With Playwright (resource-blocking) at ~200–300 products/min, 10 000
- * covers the entire catalogue (currently ~12 000 products) in roughly
- * 40–60 minutes — well within the daily 300-minute job window.
+ * This total is split evenly across WORKER_COUNT parallel jobs; each worker
+ * processes MAX_URLS_PER_RUN / WORKER_COUNT URLs.
  * @type {number}
  */
-const MAX_URLS_PER_RUN = 10000;
+const MAX_URLS_PER_RUN = 12000;
+
+/**
+ * Number of parallel GitHub Actions jobs used by the price-crawler workflow.
+ * The URL list is divided into this many equal chunks (chunks/chunk-N.json)
+ * during the prepare stage and each chunk is processed by one worker job.
+ * Raising this reduces wall-clock run time proportionally but increases
+ * concurrent GitHub Actions minutes consumed.
+ * @type {number}
+ */
+const WORKER_COUNT = 4;
 
 /** @type {number} Number of times to retry scraping a product whose price came back null (0 = no retries) */
 const NULL_PRICE_RETRY_ATTEMPTS = 2;
