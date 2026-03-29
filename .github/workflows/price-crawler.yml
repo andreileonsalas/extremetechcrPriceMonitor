@@ -17,6 +17,18 @@ on:
         options:
           - 'false'
           - 'true'
+      max_urls_per_run:
+        description: 'Max products to process this run (default: 500, use higher to catch up faster)'
+        required: false
+        default: ''
+      concurrent_requests:
+        description: 'Concurrent browser pages (default: 3, max safe: 6)'
+        required: false
+        default: ''
+      request_delay_ms:
+        description: 'Delay between batches in ms (default: 1000, min safe: 500)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -51,6 +63,9 @@ jobs:
         env:
           PRICE_UPDATE_URLS: ${{ github.event.inputs.urls }}
           FAIL_ON_NULL_PRICE: ${{ github.event.inputs.fail_on_null_price || 'false' }}
+          MAX_URLS_PER_RUN: ${{ github.event.inputs.max_urls_per_run }}
+          CONCURRENT_REQUESTS: ${{ github.event.inputs.concurrent_requests }}
+          REQUEST_DELAY_MS: ${{ github.event.inputs.request_delay_ms }}
         run: npm run prices
 
       - name: Commit and push database ZIP

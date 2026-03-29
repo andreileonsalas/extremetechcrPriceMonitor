@@ -4,22 +4,46 @@
  * Central configuration file.
  * All configurable values for the price monitor are defined here.
  * Modify this file to change behavior without touching job logic.
+ *
+ * Performance-tuning constants (CONCURRENT_REQUESTS, REQUEST_DELAY_MS,
+ * MAX_URLS_PER_RUN) can also be overridden at runtime via environment
+ * variables of the same name without touching this file.
  */
 
 /** @type {string} URL of the WooCommerce sitemap index */
 const SITEMAP_URL = 'https://extremetechcr.com/sitemap.xml';
 
-/** @type {number} Maximum concurrent HTTP requests */
-const CONCURRENT_REQUESTS = 3;
+/**
+ * Maximum concurrent browser pages used when scraping.
+ * Higher values increase throughput but risk triggering rate-limits.
+ * Default: 3. Override: CONCURRENT_REQUESTS env var.
+ * @type {number}
+ */
+const CONCURRENT_REQUESTS = process.env.CONCURRENT_REQUESTS
+  ? parseInt(process.env.CONCURRENT_REQUESTS, 10)
+  : 3;
 
-/** @type {number} Delay in milliseconds between request batches */
-const REQUEST_DELAY_MS = 1000;
+/**
+ * Milliseconds to wait between request batches.
+ * Lower values increase throughput; use with caution to avoid rate-limiting.
+ * Default: 1000. Override: REQUEST_DELAY_MS env var.
+ * @type {number}
+ */
+const REQUEST_DELAY_MS = process.env.REQUEST_DELAY_MS
+  ? parseInt(process.env.REQUEST_DELAY_MS, 10)
+  : 1000;
 
 /** @type {number} HTTP request timeout in milliseconds */
 const REQUEST_TIMEOUT_MS = 15000;
 
-/** @type {number} Maximum number of URLs to process per price-update run (rotates stale-first) */
-const MAX_URLS_PER_RUN = 500;
+/**
+ * Maximum number of product URLs to process per price-update run (stale-first rotation).
+ * Default: 500. Override: MAX_URLS_PER_RUN env var.
+ * @type {number}
+ */
+const MAX_URLS_PER_RUN = process.env.MAX_URLS_PER_RUN
+  ? parseInt(process.env.MAX_URLS_PER_RUN, 10)
+  : 500;
 
 /** @type {number} Number of times to retry scraping a product whose price came back null (0 = no retries) */
 const NULL_PRICE_RETRY_ATTEMPTS = 2;
