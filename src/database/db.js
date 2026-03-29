@@ -148,7 +148,7 @@ function upsertProduct(productData) {
       productData.imageUrl,
       stockJson,
       now,
-      productData.isAvailable ? 1 : 0,
+      1,
       productData.url
     );
     return existing.id;
