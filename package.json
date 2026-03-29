@@ -7,6 +7,8 @@
   "scripts": {
     "sitemap": "node src/jobs/updateSitemap.js",
     "prices": "node src/jobs/updatePrices.js",
+    "prepare-chunks": "node src/jobs/prepareWorkerChunks.js",
+    "merge-workers": "node src/jobs/mergeWorkerDbs.js",
     "seed": "node scripts/seedDatabase.js",
     "test": "jest",
     "test:unit": "jest tests/unit",
