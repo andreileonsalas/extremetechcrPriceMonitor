@@ -1,106 +1,124 @@
 # Cloudflare / Bot-Detection Probe Results
 
-**Target URL:** https://extremetechcr.com/producto/lenovo-ideapad-slim-3-ryzen-7-7735hs-16gb-cosmic-blue-83k700b8gj/
-**Date:** 2026-03-29T22:26:55.244Z
+**Target URL:** https://extremetechcr.com/producto/sony-playstation-5-slim-digital-825gb/
+**Last updated:** 2026-03-29
 
-## Summary Table
+## Quick verdict
+
+> extremetechcr.com runs Cloudflare **managed challenge** (`cType: managed`).
+> **Any HTTP client** (axios, got-scraping, curl, raw HTTPS) gets a 403 with a
+> "Just a moment…" JS-challenge page — regardless of headers, User-Agent, rate,
+> or delay.  Only a **real Chromium browser** that executes the challenge JS gets
+> through.  Among browsers, the stealth plugin cuts solve time by ~30–65 %.
+
+---
+
+## Probe 1 — Standard HTTP strategies
 
 | Strategy | Status | Time (ms) | Verdict |
 |---|---|---|---|
-| Raw HTTPS (no User-Agent) | 403 | 73 | BLOCKED (403 Forbidden) |
-| Raw HTTPS (curl User-Agent) | 403 | 60 | BLOCKED (403 Forbidden) |
-| Raw HTTPS (Chrome User-Agent) | 403 | 55 | BLOCKED (403 Forbidden) |
-| Axios (Chrome User-Agent) | 403 | 62 | BLOCKED (403 Forbidden) |
-| Playwright headless (no stealth) | 0 | 8 | TIMEOUT or CONNECTION ERROR |
-| Playwright headless (with stealth) | 0 | 29 | TIMEOUT or CONNECTION ERROR |
+| Raw HTTPS (no User-Agent) | 403 | 66 | ❌ BLOCKED — CF managed challenge |
+| Raw HTTPS (curl User-Agent) | 403 | 61 | ❌ BLOCKED — CF managed challenge |
+| Raw HTTPS (Chrome User-Agent) | 403 | 52 | ❌ BLOCKED — CF managed challenge |
+| Axios (Chrome UA + all browser headers) | 403 | 70 | ❌ BLOCKED — CF managed challenge |
+| Playwright headless (no stealth) | 200 | 2813 | ✅ Real product page (485 KB) |
+| Playwright headless + stealth | 200 | 1647 | ✅ Real product page (485 KB) |
 
-## Response Headers per Strategy
+*Note:* `HTTP 200 but body unrecognized` in earlier runs was a false negative — the probe
+sampled only 4 096 bytes of a 485 KB page, so WooCommerce identifiers were past the cutoff.
+All 200-status browser responses contain the real product page.
 
-### Raw HTTPS (no User-Agent)
+---
 
-```
-{
-  "server": "cloudflare",
-  "cf-ray": "9e424c38693edadb-ORD",
-  "content-type": "text/html; charset=UTF-8",
-  "x-frame-options": "SAMEORIGIN"
-}
-```
+## Probe 2 — Extended npm package comparison
 
-### Raw HTTPS (curl User-Agent)
+Packages tested to find alternatives to Playwright:
 
-```
-{
-  "server": "cloudflare",
-  "cf-ray": "9e424c4559d26bb0-DFW",
-  "content-type": "text/html; charset=UTF-8",
-  "x-frame-options": "SAMEORIGIN"
-}
-```
+| Package | Version | Type | Status | Time (ms) | Verdict |
+|---|---|---|---|---|---|
+| `axios` | 1.x | Plain HTTP | 403 | 196 | ❌ BLOCKED — CF managed challenge |
+| `got-scraping` (Apify) | 4.2.1 | HTTP + JA3 TLS spoof | 403 | 122 | ❌ BLOCKED — CF managed challenge |
+| `tls-client` | 0.0.5 | HTTP + Go TLS imitation | — | — | ⛔ SKIPPED — native ffi-napi fails on Node 24 |
+| `puppeteer` headless (no stealth) | 24.40.0 | Real Chromium | 200 | 3599 | ✅ Real product page |
+| `puppeteer-extra` + stealth | 3.3.6 + 2.11.2 | Real Chromium + stealth | 200 | 1885 | ✅ Real product page |
+| `playwright-extra` + stealth **[PRODUCTION]** | 4.3.6 + 2.11.2 | Real Chromium + stealth + resource blocking | 200 | **1220** | ✅ Real product page — **fastest** |
 
-### Raw HTTPS (Chrome User-Agent)
+---
 
-```
-{
-  "server": "cloudflare",
-  "cf-ray": "9e424c522c6addb3-DFW",
-  "content-type": "text/html; charset=UTF-8",
-  "x-frame-options": "SAMEORIGIN"
-}
-```
+## Why HTTP libraries can never work here
 
-### Axios (Chrome User-Agent)
+Cloudflare's **managed challenge** (`cType: managed`) requires the client to:
 
-```
-{
-  "server": "cloudflare",
-  "cf-ray": "9e424c5f5f6ee894-ORD",
-  "content-type": "text/html; charset=UTF-8",
-  "x-frame-options": "SAMEORIGIN"
-}
-```
+1. Execute a JavaScript challenge that fingerprints the browser environment
+   (navigator properties, canvas, WebGL, timing, etc.)
+2. Compute a proof-of-work token and POST it back to Cloudflare
+3. Receive the `cf_clearance` cookie — only then is the redirect to the real page sent
 
-### Playwright headless (no stealth)
+An HTTP client (even one with a perfect TLS fingerprint like `got-scraping` or
+`tls-client`) cannot do steps 1–3 because there is no JavaScript runtime.
+This is fundamentally different from a _rate-limit_ block, where slower requests
+or a better User-Agent might help.
 
-```
-{}
-```
+**Conclusion: a Chromium browser is mandatory for this site. Timing/delay/headers
+adjustments on HTTP clients do not help at all.**
 
-### Playwright headless (with stealth)
+---
 
-```
-{}
-```
+## Why `got-scraping` still fails despite JA3 TLS spoofing
 
-## Analysis Guide
+`got-scraping` mimics Chrome's TLS handshake (JA3 fingerprint) to fool bot detectors
+that check only at the TLS layer.  Cloudflare's managed challenge works at the
+_application layer_: it serves a page that requires JS execution.  The TLS fingerprint
+is irrelevant once the connection is established.
 
-- **`cf-ray` header present** = Cloudflare is in front of the site
-- **Status 403 / body "Just a moment..."** = Cloudflare Bot Management or JS Challenge
-- **Status 200 but body unrecognized** = Possible silent bot fingerprinting page
-- **Status 200 with product content** = Request was allowed through
-- **If only Playwright+stealth succeeds**: real browser fingerprinting is required
-- **If even Playwright+stealth fails**: IP reputation block (GitHub Actions IPs are cloud-flagged)
+---
 
-## Bypass Options (in order of practicality)
+## Browser comparison
 
-| Option | Cost | Effort | Notes |
+| Browser package | Time (ms) | vs. production |
+|---|---|---|
+| `puppeteer` (no stealth) | 3 599 | 3× slower |
+| `puppeteer-extra` + stealth | 1 885 | 1.5× slower |
+| **`playwright-extra` + stealth + resource blocking** | **1 220** | **baseline** |
+
+**playwright-extra + stealth** is the fastest because:
+- `playwright` is more actively maintained than `puppeteer` for modern Chromium
+- The stealth plugin reduces time the CF challenge needs to validate fingerprint
+- Resource blocking (images / fonts / media / CSS) cuts per-page transfer from ~3 MB to ~300 KB
+
+Both `puppeteer` variants work and could be used as a drop-in if Playwright ever
+stops working. The stealth plugin (`puppeteer-extra-plugin-stealth`) is shared between
+both — it's already a `dependencies` entry in `package.json`.
+
+---
+
+## 120-product local test results (2026-03-29)
+
+Ran `PRICE_UPDATE_URLS=<120 URLs> node src/jobs/updatePrices.js` with
+`USE_HTTP_FETCHER=false`, `CONCURRENT_REQUESTS=5`, `REQUEST_DELAY_MS=500`.
+
+| Metric | Value |
+|---|---|
+| Products processed | 120 / 120 |
+| Cloudflare blocks | **0** |
+| Null prices | 0 |
+| Total run time | ~2 minutes |
+| Throughput | ~60–70 products / min |
+| Estimated full catalogue (12 000) | ~170–200 minutes |
+| GitHub Actions job limit | 300 minutes ✅ |
+
+---
+
+## Bypass options summary
+
+| Option | Cost | Works? | Notes |
 |---|---|---|---|
-| Playwright + stealth (current) | Free | Done | Works if IP not blocked |
-| Slower request rate (lower concurrency + longer delay) | Free | Low | Reduces bot-score triggers |
-| Cloudflare Worker `fetch()` proxy | Free | Medium | Does NOT bypass CF Bot Mgmt - same server-side request |
-| Cloudflare Browser Rendering API | ~$5/mo Workers Paid | Medium | Real Chromium on CF edge - bypasses most checks |
-| Residential proxy service (e.g. Bright Data, Oxylabs) | ~$15+/mo | Low | Bypasses IP-reputation blocks |
-| ScrapingBee / Zyte / ScrapeOps | ~$50+/mo | Very Low | Managed anti-bot solution |
-| Run from non-cloud IP (e.g. self-hosted runner at home) | Free | Medium | Avoids GitHub IP flagging |
-
-## Cloudflare Worker Note
-
-A plain `fetch()` inside a Cloudflare Worker makes a **server-side HTTP request**.
-It has no browser fingerprint, cannot execute JavaScript challenges, and runs from
-Cloudflare infrastructure IPs. CF Bot Management applies at the **application layer**,
-not based on the source being Cloudflare-owned - so a plain Worker fetch will likely
-receive the same JS challenge / 403 as any other server-side request.
-
-The **Cloudflare Browser Rendering API** (Workers Paid) is different: it launches a
-real headless Chromium, executes JavaScript, passes fingerprint checks, and is
-effectively the same as running Playwright from a well-regarded IP range.
+| `playwright-extra` + stealth **[current]** | Free | ✅ Yes | Fastest browser option; resource blocking reduces load |
+| `puppeteer-extra` + stealth | Free | ✅ Yes | ~1.5× slower; same stealth plugin already in package.json |
+| `puppeteer` (no stealth) | Free | ✅ Yes | ~3× slower; CF challenge takes longer to solve |
+| `got-scraping` (JA3 TLS) | Free | ❌ No | Bypasses TLS-layer checks only; fails Cloudflare managed challenge |
+| `tls-client` | Free | ❌ Likely no | Can't compile on Node 24; same reason as got-scraping even if compiled |
+| `axios` / plain HTTP | Free | ❌ No | Always blocked |
+| Cloudflare Browser Rendering API | ~$5/mo | ✅ Yes | Real Chromium on CF edge IPs |
+| Residential proxies (Bright Data) | ~$15+/mo | ✅ Yes | Bypasses IP-reputation flags on cloud runners |
+| Self-hosted runner (home IP) | Free | ✅ Yes | Residential IP, no datacenter flag |
