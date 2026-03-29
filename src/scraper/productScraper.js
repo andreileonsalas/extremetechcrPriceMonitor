@@ -36,6 +36,7 @@ const {
  * @property {StockLocation[]} stockLocations - Per-store stock availability.
  * @property {boolean} isAvailable - Whether the product is in stock anywhere.
  * @property {boolean} isProduct - Whether the page appears to be a product page.
+ * @property {boolean} [isCloudflarePage] - True when the page is a Cloudflare challenge rather than the real product page.
  * @property {number} statusCode - HTTP status code returned.
  * @property {string|undefined} priceDebug - Human-readable explanation of why price is null (only set when price is null).
  * @property {string|undefined} htmlDebug - Diagnostic snapshot of the page (title, price container, body excerpt) when price is null.
@@ -66,6 +67,24 @@ async function scrapeProduct(url) {
 }
 
 /**
+ * Returns true when the raw HTML is a Cloudflare challenge page rather than the real site content.
+ * Cloudflare injects well-known identifiers that are reliable across challenge types:
+ *   - Managed challenge (invisible): loads script from challenges.cloudflare.com
+ *   - Interactive challenge (CAPTCHA): includes cf-browser-verification element
+ *   - Legacy JS challenge: includes jschl-answer token
+ * @param {string} html - Raw HTML string of the fetched page.
+ * @returns {boolean}
+ */
+function isCloudflareChallenge(html) {
+  return (
+    html.includes('challenges.cloudflare.com') ||
+    html.includes('cf-browser-verification') ||
+    html.includes('__cf_chl_f_tk') ||
+    html.includes('jschl-answer')
+  );
+}
+
+/**
  * Parses raw HTML for a product page and extracts all product fields.
  * Separated from scrapeProduct to allow unit testing with HTML fixtures.
  * @param {string} url - The product URL (used only in the return value).
@@ -74,6 +93,13 @@ async function scrapeProduct(url) {
  * @returns {ProductData} Parsed product data.
  */
 function scrapeProductFromHtml(url, html, statusCode = 200) {
+  // If Cloudflare served a challenge page instead of the real content, return early
+  // with isCloudflarePage=true so the caller can retry rather than treating it as a
+  // permanent "not a product" skip.
+  if (isCloudflareChallenge(html)) {
+    return { ...buildEmptyResult(url, statusCode), isCloudflarePage: true };
+  }
+
   const $ = load(html);
   const isProduct = isWooCommerceProduct($);
 
@@ -122,7 +148,8 @@ function scrapeProductFromHtml(url, html, statusCode = 200) {
 function buildHtmlDebug($) {
   const title = $('title').text().trim() || '(no title)';
   const hasSummary = $('.summary, .entry-summary').length > 0;
-  const priceHtml = $('.summary .price, .entry-summary .price').first().html();
+  // Check all known price container selectors (standard WooCommerce + Woodmart/Elementor)
+  const priceHtml = $('.summary .price, .entry-summary .price, .wd-single-price .price').first().html();
   const priceContainerInfo = priceHtml
     ? priceHtml.replace(/\s+/g, ' ').trim().slice(0, 300)
     : '(not found)';
@@ -417,6 +444,7 @@ module.exports = {
   scrapeProductFromHtml,
   buildEmptyResult,
   buildHtmlDebug,
+  isCloudflareChallenge,
   isWooCommerceProduct,
   extractText,
   extractPrice,
