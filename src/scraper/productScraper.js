@@ -38,6 +38,7 @@ const {
  * @property {boolean} isProduct - Whether the page appears to be a product page.
  * @property {number} statusCode - HTTP status code returned.
  * @property {string|undefined} priceDebug - Human-readable explanation of why price is null (only set when price is null).
+ * @property {string|undefined} htmlDebug - Diagnostic snapshot of the page (title, price container, body excerpt) when price is null.
  */
 
 /**
@@ -107,8 +108,31 @@ function scrapeProductFromHtml(url, html, statusCode = 200) {
     isAvailable,
     isProduct: true,
     statusCode,
-    ...(price === null ? { priceDebug } : {}),
+    ...(price === null ? { priceDebug, htmlDebug: buildHtmlDebug($) } : {}),
   };
+}
+
+/**
+ * Builds a human-readable diagnostic snapshot of a page to help debug why no price was found.
+ * Includes the page title, whether the WooCommerce summary container exists, the HTML of the
+ * price container, and a short body-text excerpt.
+ * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
+ * @returns {string} Multi-line diagnostic string.
+ */
+function buildHtmlDebug($) {
+  const title = $('title').text().trim() || '(no title)';
+  const hasSummary = $('.summary, .entry-summary').length > 0;
+  const priceHtml = $('.summary .price, .entry-summary .price').first().html();
+  const priceContainerInfo = priceHtml
+    ? priceHtml.replace(/\s+/g, ' ').trim().slice(0, 300)
+    : '(not found)';
+  const bodySnippet = $('body').text().replace(/\s+/g, ' ').trim().slice(0, 500);
+  return [
+    `Page title: "${title}"`,
+    `Has .summary/.entry-summary: ${hasSummary}`,
+    `Price container HTML: ${priceContainerInfo}`,
+    `Body text snippet: ${bodySnippet}`,
+  ].join('\n    ');
 }
 
 /**
@@ -392,6 +416,7 @@ module.exports = {
   scrapeProduct,
   scrapeProductFromHtml,
   buildEmptyResult,
+  buildHtmlDebug,
   isWooCommerceProduct,
   extractText,
   extractPrice,

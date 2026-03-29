@@ -11,6 +11,7 @@ const {
   parseStockQuantity,
   parseStockLocationText,
   scrapeProductFromHtml,
+  buildHtmlDebug,
 } = require('../../src/scraper/productScraper');
 const { load } = require('cheerio');
 
@@ -359,6 +360,80 @@ describe('productScraper', () => {
 
     test('returns null for unrecognized format', () => {
       expect(parseStockLocationText('No stock info')).toBeNull();
+    });
+  });
+
+  describe('buildHtmlDebug', () => {
+    test('includes page title in output', () => {
+      const $ = load('<html><head><title>Test Product Page</title></head><body class="single-product"></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Page title: "Test Product Page"');
+    });
+
+    test('falls back to (no title) when title element is missing', () => {
+      const $ = load('<html><body class="single-product"></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Page title: "(no title)"');
+    });
+
+    test('reports true when .summary container is present', () => {
+      const $ = load('<html><body><div class="summary entry-summary"><p class="price"></p></div></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Has .summary/.entry-summary: true');
+    });
+
+    test('reports false when .summary container is absent', () => {
+      const $ = load('<html><body><div class="other"></div></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Has .summary/.entry-summary: false');
+    });
+
+    test('includes price container HTML when price container exists', () => {
+      const $ = load('<html><body><div class="summary entry-summary"><p class="price"><span>₡39.900</span></p></div></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Price container HTML:');
+      expect(debug).toContain('39.900');
+    });
+
+    test('reports (not found) for price container when absent', () => {
+      const $ = load('<html><body><div class="summary entry-summary"></div></body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Price container HTML: (not found)');
+    });
+
+    test('includes body text snippet', () => {
+      const $ = load('<html><head><title>Just a moment...</title></head><body>Cloudflare challenge text here</body></html>');
+      const debug = buildHtmlDebug($);
+      expect(debug).toContain('Body text snippet:');
+      expect(debug).toContain('Cloudflare challenge text here');
+    });
+
+    test('attaches htmlDebug to scrapeProductFromHtml result when price is null', () => {
+      const nopriceHtml = `
+        <!DOCTYPE html>
+        <html><head><title>Product Page</title></head>
+        <body class="single-product woocommerce-page">
+          <div class="product" itemscope itemtype="https://schema.org/Product">
+            <h1 class="product_title entry-title">No Price Product</h1>
+            <div class="summary entry-summary">
+              <!-- no price element -->
+            </div>
+          </div>
+        </body></html>`;
+      const result = scrapeProductFromHtml('https://example.com/producto/test/', nopriceHtml);
+      expect(result.price).toBeNull();
+      expect(result.htmlDebug).toBeDefined();
+      expect(result.htmlDebug).toContain('Page title: "Product Page"');
+      expect(result.htmlDebug).toContain('Has .summary/.entry-summary: true');
+    });
+
+    test('does not attach htmlDebug when price is found', () => {
+      const result = scrapeProductFromHtml(
+        'https://extremetechcr.com/producto/intel-pentium-gold-g6405/',
+        HTML_PENTIUM_G6405
+      );
+      expect(result.price).not.toBeNull();
+      expect(result.htmlDebug).toBeUndefined();
     });
   });
 

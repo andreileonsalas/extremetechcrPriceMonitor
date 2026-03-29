@@ -23,7 +23,7 @@ const {
 } = require('../database/db');
 const { fetchUrlsInBatches, delay } = require('../scraper/sitemapReader');
 const { closeBrowser } = require('../scraper/browser');
-const { MAX_URLS_PER_RUN, NULL_PRICE_RETRY_ATTEMPTS, NULL_PRICE_RETRY_DELAY_MS } = require('../config');
+const { MAX_URLS_PER_RUN, NULL_PRICE_RETRY_ATTEMPTS, NULL_PRICE_RETRY_DELAY_MS, NULL_PRICE_FAIL_THRESHOLD } = require('../config');
 
 /** How often (in products processed) to export an intermediate db.zip snapshot. */
 const EXPORT_INTERVAL = 50;
@@ -79,7 +79,8 @@ async function processProductUrl(url) {
     if (data.price === null) {
       nullPriceCount += 1;
       const reason = data.priceDebug || 'unknown reason';
-      console.warn(`  [NULL PRICE] ${url} | Reason: ${reason}`);
+      const htmlInfo = data.htmlDebug ? `\n    ${data.htmlDebug}` : '';
+      console.warn(`  [NULL PRICE] ${url} | Reason: ${reason}${htmlInfo}`);
     }
 
     console.log(`Updated: ${url} | Price: ${data.price} ${data.currency}`);
@@ -142,8 +143,17 @@ async function runPriceUpdate() {
 
   if (nullPriceCount > 0) {
     console.warn(`[NULL PRICES] ${nullPriceCount} product(s) had a null price in this run.`);
-    if (process.env.FAIL_ON_NULL_PRICE === 'true') {
-      throw new Error(`Job failed: ${nullPriceCount} product(s) returned a null price. To allow null prices, set the workflow input 'fail_on_null_price' to 'false' or set the FAIL_ON_NULL_PRICE environment variable to 'false'.`);
+    const envThreshold = parseInt(process.env.NULL_PRICE_FAIL_THRESHOLD, 10);
+    const threshold = (process.env.NULL_PRICE_FAIL_THRESHOLD !== undefined && !Number.isNaN(envThreshold))
+      ? envThreshold
+      : NULL_PRICE_FAIL_THRESHOLD;
+    if (process.env.FAIL_ON_NULL_PRICE === 'true' && nullPriceCount > threshold) {
+      throw new Error(
+        `Job failed: ${nullPriceCount} null-price product(s) exceeded the allowed threshold of ${threshold}. ` +
+        `To allow null prices, set the workflow input 'fail_on_null_price' to 'false' or set the ` +
+        `FAIL_ON_NULL_PRICE environment variable to 'false'. ` +
+        `To raise the threshold, set NULL_PRICE_FAIL_THRESHOLD to a higher value.`
+      );
     }
   }
 }

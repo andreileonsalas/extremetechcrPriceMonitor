@@ -27,6 +27,9 @@ const NULL_PRICE_RETRY_ATTEMPTS = 2;
 /** @type {number} Milliseconds to wait between null-price retry attempts */
 const NULL_PRICE_RETRY_DELAY_MS = 10000;
 
+/** @type {number} How many null-price products are allowed before the job fails (when FAIL_ON_NULL_PRICE is true). 0 = fail on any single null price. */
+const NULL_PRICE_FAIL_THRESHOLD = 50;
+
 /** @type {string} Path to the SQLite database file */
 const DB_PATH = './data/prices.db';
 
@@ -118,6 +121,7 @@ module.exports = {
   MAX_URLS_PER_RUN,
   NULL_PRICE_RETRY_ATTEMPTS,
   NULL_PRICE_RETRY_DELAY_MS,
+  NULL_PRICE_FAIL_THRESHOLD,
   DB_PATH,
   DB_ZIP_PATH,
   USER_AGENT,
