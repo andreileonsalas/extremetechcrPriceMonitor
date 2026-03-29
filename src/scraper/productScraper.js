@@ -37,6 +37,7 @@ const {
  * @property {boolean} isAvailable - Whether the product is in stock anywhere.
  * @property {boolean} isProduct - Whether the page appears to be a product page.
  * @property {number} statusCode - HTTP status code returned.
+ * @property {string|undefined} priceDebug - Human-readable explanation of why price is null (only set when price is null).
  */
 
 /**
@@ -80,7 +81,7 @@ function scrapeProductFromHtml(url, html, statusCode = 200) {
   }
 
   const name = extractText($, SELECTOR_PRODUCT_TITLE);
-  const { price, originalPrice, currency } = extractPrice($);
+  const { price, originalPrice, currency, priceDebug } = extractPrice($);
   const discountPercentage = extractDiscountPercentage($);
   const sku = extractText($, SELECTOR_PRODUCT_SKU);
   const category = extractText($, SELECTOR_PRODUCT_CATEGORY);
@@ -106,6 +107,7 @@ function scrapeProductFromHtml(url, html, statusCode = 200) {
     isAvailable,
     isProduct: true,
     statusCode,
+    ...(price === null ? { priceDebug } : {}),
   };
 }
 
@@ -166,8 +168,9 @@ function extractText($, selector) {
  * When a sale price is present (inside an <ins> element), that is returned as `price`
  * and the struck-through original is returned as `originalPrice`.
  * When no sale, `price` is the regular price and `originalPrice` is null.
+ * When price cannot be determined, `priceDebug` contains a human-readable explanation.
  * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
- * @returns {{ price: number|null, originalPrice: number|null, currency: string|null }}
+ * @returns {{ price: number|null, originalPrice: number|null, currency: string|null, priceDebug?: string }}
  */
 function extractPrice($) {
   // Check for a sale price first (inside <ins>)
@@ -181,16 +184,43 @@ function extractPrice($) {
     const origEl = $(SELECTOR_PRODUCT_ORIGINAL_PRICE).first();
     const origPrice = origEl.length ? parseNumericPrice(origEl.text().trim()) : null;
 
+    if (salePrice === null) {
+      return {
+        price: null,
+        originalPrice: null,
+        currency,
+        priceDebug: `Sale price element found but numeric parsing failed. Raw text: "${saleRaw}"`,
+      };
+    }
+
     return { price: salePrice, originalPrice: origPrice, currency };
   }
 
   // No sale: use regular price
   const priceEl = $(SELECTOR_PRODUCT_PRICE).first();
-  if (!priceEl.length) return { price: null, originalPrice: null, currency: null };
+  if (!priceEl.length) {
+    return {
+      price: null,
+      originalPrice: null,
+      currency: null,
+      priceDebug: `No price element found in the page. Selectors tried: "${SELECTOR_PRODUCT_SALE_PRICE}" and "${SELECTOR_PRODUCT_PRICE}"`,
+    };
+  }
 
   const raw = priceEl.text().trim();
+  const price = parseNumericPrice(raw);
+
+  if (price === null) {
+    return {
+      price: null,
+      originalPrice: null,
+      currency: extractCurrencySymbol(raw),
+      priceDebug: `Price element found but numeric parsing failed. Raw text: "${raw}"`,
+    };
+  }
+
   return {
-    price: parseNumericPrice(raw),
+    price,
     originalPrice: null,
     currency: extractCurrencySymbol(raw),
   };
