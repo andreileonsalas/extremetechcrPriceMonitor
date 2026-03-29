@@ -17,7 +17,7 @@ const DEFAULT_CHART_DAYS = 365;
 const PRODUCTS_PER_PAGE = 60;
 
 /** @type {string} Fallback text when a product name is unknown */
-const UNKNOWN_PRODUCT_NAME = '(Unknown Product)';
+const UNKNOWN_PRODUCT_NAME = '(Producto desconocido)';
 
 /** @type {string} Currency symbol for CRC */
 const CRC_SYMBOL = '\u20a1';
@@ -29,7 +29,7 @@ const CRC_SYMBOL = '\u20a1';
 /** @type {import('sql.js').Database|null} In-memory SQLite database */
 let sqlDb = null;
 
-/** @type {Array<Object>} Cached list of all products */
+/** @type {Array<Object>} Cached list of all products (active + inactive with a price) */
 let allProducts = [];
 
 /** @type {import('chart.js').Chart|null} Active Chart.js instance */
@@ -37,6 +37,18 @@ let activeChart = null;
 
 /** @type {number} Currently selected chart date range in days */
 let selectedChartDays = DEFAULT_CHART_DAYS;
+
+/** @type {boolean} Whether to show products that are active on extremetechcr.com */
+let filterShowActive = true;
+
+/** @type {boolean} Whether to show products that are no longer on extremetechcr.com */
+let filterShowInactive = false;
+
+/** @type {boolean} Whether to show products that have stock */
+let filterShowInStock = true;
+
+/** @type {boolean} Whether to show products with no stock */
+let filterShowOutOfStock = true;
 
 /* =========================================================
    INITIALIZATION
@@ -48,16 +60,16 @@ let selectedChartDays = DEFAULT_CHART_DAYS;
  */
 async function init() {
   try {
-    setStatus('Loading database...');
+    setStatus('Cargando base de datos...');
     const SQL = await initSqlJs({ locateFile: () => SQL_WASM_URL });
     const dbBuffer = await loadDatabaseFromZip();
     sqlDb = new SQL.Database(new Uint8Array(dbBuffer));
     allProducts = queryAllProducts();
-    renderProducts(allProducts);
-    setStatus(`Database loaded. Last updated: ${getLastUpdated()}`);
+    renderProducts(filterProducts(allProducts));
+    setStatus(`Base de datos cargada. Última actualización: ${getLastUpdated()}`);
     setupEventListeners();
   } catch (err) {
-    showError('Failed to load the product database: ' + err.message);
+    showError('Error al cargar la base de datos de productos: ' + err.message);
     console.error(err);
   }
 }
@@ -85,19 +97,20 @@ async function loadDatabaseFromZip() {
    ========================================================= */
 
 /**
- * Queries all active products that have been priced (have an open price record).
- * Products inserted by the sitemap crawler but not yet scraped (price = null)
- * are excluded so the UI never shows a wall of "(Unknown Product)" cards.
+ * Queries all products that have been priced (have a price record), regardless of
+ * whether they are still active on the site. Inactive products (removed from the site)
+ * are included so the user can find them by toggling the "Ya no en extremetechcr.com" filter.
+ * Products inserted by the sitemap crawler but not yet scraped (no price record) are
+ * excluded so the UI never shows a wall of "(Producto desconocido)" cards.
  * @returns {Array<Object>} Array of product row objects.
  */
 function queryAllProducts() {
   const result = sqlDb.exec(`
     SELECT p.id, p.url, p.name, p.sku, p.category, p.imageUrl, p.lastCheckedAt,
-           p.stockLocations, ph.price, ph.originalPrice, ph.currency
+           p.stockLocations, p.isActive, ph.price, ph.originalPrice, ph.currency
     FROM products p
     INNER JOIN priceHistory ph ON ph.productId = p.id AND ph.endDate IS NULL
-    WHERE p.isActive = 1
-    ORDER BY p.name ASC
+    ORDER BY p.isActive DESC, p.name ASC
   `);
   if (!result.length) return [];
   return rowsToObjects(result[0]);
@@ -140,14 +153,14 @@ function queryPriceHistory(productId, days) {
 
 /**
  * Returns the ISO string of the latest lastCheckedAt value across all products.
- * @returns {string} Date string of last database update, or "unknown".
+ * @returns {string} Date string of last database update, or "desconocido".
  */
 function getLastUpdated() {
   const result = sqlDb.exec('SELECT MAX(lastCheckedAt) as ts FROM products');
-  if (!result.length || !result[0].values.length) return 'unknown';
+  if (!result.length || !result[0].values.length) return 'desconocido';
   const ts = result[0].values[0][0];
-  if (!ts) return 'unknown';
-  return new Date(ts).toLocaleDateString();
+  if (!ts) return 'desconocido';
+  return new Date(ts).toLocaleDateString('es-CR');
 }
 
 /**
@@ -162,6 +175,98 @@ function rowsToObjects(queryResult) {
     columns.forEach((col, i) => { obj[col] = row[i]; });
     return obj;
   });
+}
+
+/* =========================================================
+   FILTERING & SORTING
+   ========================================================= */
+
+/**
+ * Returns true if the product has at least one stock location with quantity > 0.
+ * Returns false when stockLocations is null, empty, or all quantities are 0.
+ * @param {string|null} stockLocationsJson - JSON string of StockLocation[].
+ * @returns {boolean}
+ */
+function isProductInStock(stockLocationsJson) {
+  if (!stockLocationsJson) return false;
+  try {
+    const locs = JSON.parse(stockLocationsJson);
+    return Array.isArray(locs) && locs.some((loc) => loc.quantity > 0);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Applies the current filter state (active/inactive, in-stock/out-of-stock, search term)
+ * and returns the matching subset of allProducts.
+ * @param {Array<Object>} products - Full product list to filter.
+ * @returns {Array<Object>} Filtered products.
+ */
+function filterProducts(products) {
+  const searchTerm = document.getElementById('searchInput')
+    ? document.getElementById('searchInput').value.toLowerCase().trim()
+    : '';
+
+  return products.filter((p) => {
+    // Existence filter
+    if (p.isActive === 1 && !filterShowActive) return false;
+    if (p.isActive === 0 && !filterShowInactive) return false;
+
+    // Stock filter (only applied to active products; inactive ones are just shown as-is)
+    if (p.isActive === 1) {
+      const inStock = isProductInStock(p.stockLocations);
+      if (inStock && !filterShowInStock) return false;
+      if (!inStock && !filterShowOutOfStock) return false;
+    }
+
+    // Search filter: name, URL, or SKU
+    if (searchTerm) {
+      const name = (p.name || '').toLowerCase();
+      const url = (p.url || '').toLowerCase();
+      const sku = (p.sku || '').toLowerCase();
+      if (!name.includes(searchTerm) && !url.includes(searchTerm) && !sku.includes(searchTerm)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Filters and sorts the product list based on the current search term, sort selection,
+ * and checkbox filter state, then re-renders the product grid.
+ */
+function filterAndSort() {
+  const sortValue = document.getElementById('sortSelect').value;
+  const filtered = sortProducts(filterProducts(allProducts), sortValue);
+  renderProducts(filtered);
+}
+
+/**
+ * Sorts an array of product objects by the given sort key.
+ * @param {Array<Object>} products - Products to sort.
+ * @param {string} sortKey - One of "name-asc", "name-desc", "price-asc", "price-desc".
+ * @returns {Array<Object>} Sorted array (new array, original unchanged).
+ */
+function sortProducts(products, sortKey) {
+  const sorted = [...products];
+  sorted.sort((a, b) => {
+    switch (sortKey) {
+      case 'name-asc':
+        return (a.name || '').localeCompare(b.name || '');
+      case 'name-desc':
+        return (b.name || '').localeCompare(a.name || '');
+      case 'price-asc':
+        return (a.price ?? Infinity) - (b.price ?? Infinity);
+      case 'price-desc':
+        return (b.price ?? -Infinity) - (a.price ?? -Infinity);
+      default:
+        return 0;
+    }
+  });
+  return sorted;
 }
 
 /* =========================================================
@@ -182,7 +287,7 @@ function renderProducts(products) {
   grid.innerHTML = '';
 
   const shown = products.slice(0, PRODUCTS_PER_PAGE);
-  count.textContent = `Showing ${shown.length} of ${products.length} products`;
+  count.textContent = `Mostrando ${shown.length} de ${products.length} productos`;
 
   shown.forEach((product) => {
     const col = document.createElement('div');
@@ -205,9 +310,7 @@ function renderProducts(products) {
  * Builds the Bootstrap card HTML for a single product.
  * Shows a strikethrough original price and discount badge when on sale.
  * Shows per-store stock information when available.
- * When no image URL is stored (sitemap-only products not yet scraped), or when
- * the remote image fails to load, a placeholder prompting the user to click for
- * price history is shown instead.
+ * Shows status badges for inactive products and out-of-stock products.
  * @param {Object} product - Product row object.
  * @returns {string} HTML string for the product card.
  */
@@ -215,11 +318,12 @@ function buildProductCardHtml(product) {
   const name = escapeHtml(product.name || UNKNOWN_PRODUCT_NAME);
   const category = product.category ? escapeHtml(product.category) : '';
   const imgHtml = product.imageUrl
-    ? `<img src="${escapeHtml(product.imageUrl)}" class="product-img" alt="${name}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.classList.remove('d-none')" /><div class="product-img-placeholder d-none">View price history</div>`
-    : `<div class="product-img-placeholder">View price history</div>`;
+    ? `<img src="${escapeHtml(product.imageUrl)}" class="product-img" alt="${name}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.classList.remove('d-none')" /><div class="product-img-placeholder d-none">Ver historial de precios</div>`
+    : `<div class="product-img-placeholder">Ver historial de precios</div>`;
 
   const priceHtml = buildPriceHtml(product);
   const stockHtml = buildStockHtml(product.stockLocations);
+  const statusBadges = buildStatusBadges(product);
 
   return `
     <div class="card h-100 product-card"
@@ -229,13 +333,31 @@ function buildProductCardHtml(product) {
       <div class="card-body">
         <h6 class="card-title">${name}</h6>
         ${category ? `<p class="card-text text-muted small mb-1">${category}</p>` : ''}
+        ${statusBadges}
         ${priceHtml}
         ${stockHtml}
       </div>
       <div class="card-footer text-muted small">
-        <a href="${escapeHtml(product.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View product</a>
+        <a href="${escapeHtml(product.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver en ExtremeTechCR</a>
       </div>
     </div>`;
+}
+
+/**
+ * Builds status badge HTML for a product card.
+ * Shows "Ya no disponible" for inactive products (removed from site).
+ * Shows "Sin stock" for active products with no available stock locations.
+ * @param {Object} product - Product row object with isActive and stockLocations.
+ * @returns {string} HTML snippet with status badges, or empty string.
+ */
+function buildStatusBadges(product) {
+  if (product.isActive === 0) {
+    return '<div class="mb-1"><span class="badge bg-secondary">Ya no disponible</span></div>';
+  }
+  if (!isProductInStock(product.stockLocations)) {
+    return '<div class="mb-1"><span class="badge bg-warning text-dark">Sin stock</span></div>';
+  }
+  return '';
 }
 
 /**
@@ -246,7 +368,7 @@ function buildProductCardHtml(product) {
  */
 function buildPriceHtml(product) {
   if (product.price == null) {
-    return '<span class="text-muted small">Price unavailable</span>';
+    return '<span class="text-muted small">Precio no disponible</span>';
   }
   const activePrice = `${CRC_SYMBOL} ${formatNumber(product.price)}`;
 
@@ -300,7 +422,7 @@ function buildStockHtml(stockLocationsJson) {
  */
 function openPriceModal(productId, name) {
   document.getElementById('priceModalTitle').textContent =
-    'Price History: ' + (name || UNKNOWN_PRODUCT_NAME);
+    'Historial de precios: ' + (name || UNKNOWN_PRODUCT_NAME);
 
   selectedChartDays = DEFAULT_CHART_DAYS;
   document.querySelectorAll('.range-btn').forEach((btn) => {
@@ -346,7 +468,7 @@ function renderPriceChart(productId, days) {
     data: {
       labels,
       datasets: [{
-        label: 'Price',
+        label: 'Precio',
         data: prices,
         borderColor: '#0d6efd',
         backgroundColor: 'rgba(13, 110, 253, 0.1)',
@@ -409,53 +531,6 @@ function buildChartData(history, days) {
 }
 
 /* =========================================================
-   SEARCH AND SORT
-   ========================================================= */
-
-/**
- * Filters and sorts the product list based on the current search term and sort selection.
- */
-function filterAndSort() {
-  const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
-  const sortValue = document.getElementById('sortSelect').value;
-
-  let filtered = allProducts.filter((p) => {
-    if (!searchTerm) return true;
-    const name = (p.name || '').toLowerCase();
-    const url = (p.url || '').toLowerCase();
-    return name.includes(searchTerm) || url.includes(searchTerm);
-  });
-
-  filtered = sortProducts(filtered, sortValue);
-  renderProducts(filtered);
-}
-
-/**
- * Sorts an array of product objects by the given sort key.
- * @param {Array<Object>} products - Products to sort.
- * @param {string} sortKey - One of "name-asc", "name-desc", "price-asc", "price-desc".
- * @returns {Array<Object>} Sorted array (new array, original unchanged).
- */
-function sortProducts(products, sortKey) {
-  const sorted = [...products];
-  sorted.sort((a, b) => {
-    switch (sortKey) {
-      case 'name-asc':
-        return (a.name || '').localeCompare(b.name || '');
-      case 'name-desc':
-        return (b.name || '').localeCompare(a.name || '');
-      case 'price-asc':
-        return (a.price ?? Infinity) - (b.price ?? Infinity);
-      case 'price-desc':
-        return (b.price ?? -Infinity) - (a.price ?? -Infinity);
-      default:
-        return 0;
-    }
-  });
-  return sorted;
-}
-
-/* =========================================================
    EVENT LISTENERS
    ========================================================= */
 
@@ -470,6 +545,26 @@ function setupEventListeners() {
   });
 
   document.getElementById('sortSelect').addEventListener('change', filterAndSort);
+
+  document.getElementById('filterActive').addEventListener('change', (e) => {
+    filterShowActive = e.target.checked;
+    filterAndSort();
+  });
+
+  document.getElementById('filterInactive').addEventListener('change', (e) => {
+    filterShowInactive = e.target.checked;
+    filterAndSort();
+  });
+
+  document.getElementById('filterInStock').addEventListener('change', (e) => {
+    filterShowInStock = e.target.checked;
+    filterAndSort();
+  });
+
+  document.getElementById('filterOutOfStock').addEventListener('change', (e) => {
+    filterShowOutOfStock = e.target.checked;
+    filterAndSort();
+  });
 
   document.querySelectorAll('.range-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -529,12 +624,12 @@ function formatNumber(value) {
 }
 
 /**
- * Formats a Date object as a short date string (MM/DD/YYYY).
+ * Formats a Date object as a short date string.
  * @param {Date} date - Date to format.
  * @returns {string}
  */
 function formatDate(date) {
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return date.toLocaleDateString('es-CR', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /* =========================================================

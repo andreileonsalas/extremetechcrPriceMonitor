@@ -16,6 +16,7 @@ const { closeBrowser } = require('../scraper/browser');
  * Runs the sitemap update job.
  * Fetches all product URLs from the sitemap, compares against what is
  * already tracked in the database, and inserts new products.
+ * Logs a detailed comparison so gaps are immediately visible in CI logs.
  * @returns {Promise<void>}
  */
 async function runSitemapUpdate() {
@@ -25,7 +26,24 @@ async function runSitemapUpdate() {
   const existingUrls = new Set(getAllProductUrls());
 
   const newUrls = sitemapUrls.filter((url) => !existingUrls.has(url));
-  console.log(`Found ${newUrls.length} new product URLs to add`);
+  const orphanedUrls = [...existingUrls].filter((url) => !sitemapUrls.includes(url));
+
+  console.log('=== SITEMAP vs DATABASE COMPARISON ===');
+  console.log(`  Sitemap product URLs : ${sitemapUrls.length}`);
+  console.log(`  Database tracked URLs: ${existingUrls.size}`);
+  console.log(`  New (in sitemap, not in DB): ${newUrls.length}`);
+  console.log(`  Orphaned (in DB, not in sitemap — possibly deleted from site): ${orphanedUrls.length}`);
+  console.log('======================================');
+
+  if (newUrls.length > 0) {
+    console.log('New URLs being added:');
+    newUrls.forEach((url) => console.log(`  + ${url}`));
+  }
+
+  if (orphanedUrls.length > 0) {
+    console.log('Orphaned URLs (in DB but missing from sitemap — may have been removed from the site):');
+    orphanedUrls.forEach((url) => console.log(`  ? ${url}`));
+  }
 
   for (const url of newUrls) {
     upsertProduct({

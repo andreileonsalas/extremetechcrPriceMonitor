@@ -53,7 +53,7 @@ function createTestDatabase() {
   const now = new Date().toISOString();
   const insertProduct = db.prepare(`
     INSERT INTO products (url, name, sku, category, description, imageUrl, stockLocations, firstSeenAt, lastCheckedAt, isActive)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertPrice = db.prepare(`
     INSERT INTO priceHistory (productId, price, originalPrice, currency, startDate)
@@ -63,6 +63,7 @@ function createTestDatabase() {
   /**
    * Seed data - includes the 3 required specific products plus extras.
    * originalPrice is non-null for products on sale (Razer Kraken).
+   * The Memoria RAM product is inactive (removed from the site) for filter tests.
    */
   const seedData = [
     {
@@ -72,6 +73,7 @@ function createTestDatabase() {
       category: 'Procesadores',
       price: 39900,
       originalPrice: null,
+      isActive: 1,
       stockLocations: JSON.stringify([
         { location: 'Alajuela', quantity: 1 },
         { location: 'San Jose Centro', quantity: 1 },
@@ -85,6 +87,7 @@ function createTestDatabase() {
       category: 'Monitores',
       price: 34900,
       originalPrice: null,
+      isActive: 1,
       stockLocations: JSON.stringify([{ location: 'Guapiles', quantity: 1 }]),
     },
     {
@@ -94,6 +97,7 @@ function createTestDatabase() {
       category: 'Audifonos',
       price: 67901,
       originalPrice: 69900,
+      isActive: 1,
       stockLocations: JSON.stringify([
         { location: 'San Jose Centro', quantity: 2 },
         { location: 'Alajuela', quantity: 1 },
@@ -107,6 +111,7 @@ function createTestDatabase() {
       category: 'Laptops',
       price: 850000,
       originalPrice: null,
+      isActive: 1,
       stockLocations: null,
     },
     {
@@ -116,12 +121,23 @@ function createTestDatabase() {
       category: 'Mouses',
       price: 45000,
       originalPrice: null,
+      isActive: 1,
+      stockLocations: null,
+    },
+    {
+      url: 'https://extremetechcr.com/producto/memoria-ram-para-pc-8gb-2400mhz-oem/',
+      name: 'Memoria RAM para PC 8GB 2400MHz OEM',
+      sku: 'MM001',
+      category: 'Memorias RAM',
+      price: 25000,
+      originalPrice: null,
+      isActive: 0, // Product has been removed from the site
       stockLocations: null,
     },
   ];
 
-  seedData.forEach(({ url, name, sku, category, price, originalPrice, stockLocations }) => {
-    const result = insertProduct.run(url, name, sku, category, null, null, stockLocations, now, now);
+  seedData.forEach(({ url, name, sku, category, price, originalPrice, isActive, stockLocations }) => {
+    const result = insertProduct.run(url, name, sku, category, null, null, stockLocations, now, now, isActive ?? 1);
     insertPrice.run(result.lastInsertRowid, price, originalPrice, now);
   });
 
@@ -154,10 +170,12 @@ test.describe('Frontend - Product Display', () => {
     const grid = page.locator('#productGrid');
     await expect(grid).toBeVisible();
     const cards = grid.locator('.product-card');
+    // 5 active products shown by default (inactive product hidden until filter enabled)
     await expect(cards).toHaveCount(5);
   });
 
   test('shows product count label', async ({ page }) => {
+    // 5 active products visible by default
     await expect(page.locator('#productCount')).toContainText('5');
   });
 
@@ -173,6 +191,12 @@ test.describe('Frontend - Product Display', () => {
     await expect(link).toBeVisible();
     const href = await link.getAttribute('href');
     expect(href).toContain('extremetechcr.com');
+  });
+
+  test('card link text is in Spanish', async ({ page }) => {
+    const link = page.locator('.product-card .card-footer a').first();
+    const text = await link.textContent();
+    expect(text.trim()).toBe('Ver en ExtremeTechCR');
   });
 });
 
@@ -196,11 +220,79 @@ test.describe('Frontend - Search', () => {
     await expect(cards).toHaveCount(1);
   });
 
-  test('shows no results message when nothing matches', async ({ page }) => {
-    await page.fill('#searchInput', 'xxxxxxxxxxx');
+  test('filters products by SKU', async ({ page }) => {
+    await page.fill('#searchInput', 'CPU1011');
     await page.waitForTimeout(400);
-    const count = page.locator('#productCount');
-    await expect(count).toContainText('0');
+    const cards = page.locator('.product-card');
+    await expect(cards).toHaveCount(1);
+  });
+
+  test('SKU search finds the correct product', async ({ page }) => {
+    await page.fill('#searchInput', 'CPU1011');
+    await page.waitForTimeout(400);
+    const title = await page.locator('.product-card .card-title').first().textContent();
+    expect(title.toLowerCase()).toContain('pentium');
+  });
+
+  test('filters products by URL fragment', async ({ page }) => {
+    await page.fill('#searchInput', 'razer-kraken');
+    await page.waitForTimeout(400);
+    const cards = page.locator('.product-card');
+    await expect(cards).toHaveCount(1);
+  });
+});
+
+test.describe('Frontend - Status Filters', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#loadingState')).toBeHidden({ timeout: 15000 });
+  });
+
+  test('inactive product is hidden by default', async ({ page }) => {
+    // Only active products visible by default (filterActive=checked, filterInactive=unchecked)
+    const cards = page.locator('.product-card');
+    await expect(cards).toHaveCount(5);
+  });
+
+  test('shows inactive product when filterInactive is checked', async ({ page }) => {
+    await page.check('#filterInactive');
+    await page.waitForTimeout(300);
+    const cards = page.locator('.product-card');
+    // All 6 products: 5 active + 1 inactive (Memoria RAM)
+    await expect(cards).toHaveCount(6);
+  });
+
+  test('inactive product shows "Ya no disponible" badge', async ({ page }) => {
+    await page.check('#filterInactive');
+    await page.waitForTimeout(300);
+    await page.fill('#searchInput', 'memoria');
+    await page.waitForTimeout(400);
+    const badge = page.locator('.product-card .badge.bg-secondary');
+    await expect(badge.first()).toContainText('Ya no disponible');
+  });
+
+  test('inactive product card links back to its URL on extremetechcr.com', async ({ page }) => {
+    await page.check('#filterInactive');
+    await page.waitForTimeout(300);
+    await page.fill('#searchInput', 'memoria');
+    await page.waitForTimeout(400);
+    const link = page.locator('.product-card .card-footer a').first();
+    const href = await link.getAttribute('href');
+    expect(href).toContain('memoria-ram-para-pc-8gb-2400mhz-oem');
+  });
+
+  test('hiding active products shows only inactive', async ({ page }) => {
+    await page.uncheck('#filterActive');
+    await page.check('#filterInactive');
+    await page.waitForTimeout(300);
+    const cards = page.locator('.product-card');
+    await expect(cards).toHaveCount(1);
+  });
+
+  test('unchecking both existence filters shows no products', async ({ page }) => {
+    await page.uncheck('#filterActive');
+    await page.waitForTimeout(300);
+    await expect(page.locator('#productCount')).toContainText('0');
   });
 });
 

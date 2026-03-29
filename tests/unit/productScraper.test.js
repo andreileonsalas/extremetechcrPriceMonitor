@@ -226,9 +226,9 @@ describe('productScraper', () => {
 
   describe('extractPrice', () => {
     test('returns regular price when no sale (Costa Rican dot-thousands format)', () => {
-      const $ = load(`<p class="price">
+      const $ = load(`<div class="summary entry-summary"><p class="price">
         <span class="woocommerce-Price-amount amount"><bdi><span class="woocommerce-Price-currencySymbol">&#8353;</span>39.900</bdi></span>
-      </p>`);
+      </p></div>`);
       const { price, originalPrice, currency } = extractPrice($);
       expect(price).toBe(39900);
       expect(originalPrice).toBeNull();
@@ -236,10 +236,10 @@ describe('productScraper', () => {
     });
 
     test('returns sale price from <ins> and original from <del>', () => {
-      const $ = load(`<p class="price">
+      const $ = load(`<div class="summary entry-summary"><p class="price">
         <del><span class="woocommerce-Price-amount amount"><bdi><span>&#8353;</span>69.900</bdi></span></del>
         <ins><span class="woocommerce-Price-amount amount"><bdi><span>&#8353;</span>67.901</bdi></span></ins>
-      </p>`);
+      </p></div>`);
       const { price, originalPrice, currency } = extractPrice($);
       expect(price).toBe(67901);
       expect(originalPrice).toBe(69900);
@@ -252,6 +252,48 @@ describe('productScraper', () => {
       expect(price).toBeNull();
       expect(originalPrice).toBeNull();
       expect(currency).toBeNull();
+    });
+
+    test('ignores prices in related products — only reads from .summary', () => {
+      // Related product has ₡1.900 (cheap add-on price) appearing BEFORE the main product in DOM.
+      // Main product is ₡375.000. The scraper must return the summary price, not the related one.
+      const $ = load(`
+        <div class="related products">
+          <article class="product">
+            <p class="price">
+              <span class="woocommerce-Price-amount amount"><bdi><span>&#8353;</span>1.900</bdi></span>
+            </p>
+          </article>
+        </div>
+        <div class="summary entry-summary">
+          <p class="price">
+            <span class="woocommerce-Price-amount amount"><bdi><span>&#8353;</span>375.000</bdi></span>
+          </p>
+        </div>
+      `);
+      const { price } = extractPrice($);
+      expect(price).toBe(375000);
+    });
+
+    test('ignores sale prices in related products — only reads from .summary', () => {
+      const $ = load(`
+        <div class="related products">
+          <article class="product">
+            <p class="price">
+              <ins><span class="woocommerce-Price-amount amount"><bdi><span>&#8353;</span>6.500</bdi></span></ins>
+            </p>
+          </article>
+        </div>
+        <div class="summary entry-summary">
+          <p class="price">
+            <del><span class="woocommerce-Price-amount amount"><bdi><span>&#8353;</span>850.000</bdi></span></del>
+            <ins><span class="woocommerce-Price-amount amount"><bdi><span>&#8353;</span>799.000</bdi></span></ins>
+          </p>
+        </div>
+      `);
+      const { price, originalPrice } = extractPrice($);
+      expect(price).toBe(799000);
+      expect(originalPrice).toBe(850000);
     });
   });
 

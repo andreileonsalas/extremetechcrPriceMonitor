@@ -167,7 +167,7 @@ function upsertProduct(productData) {
     stockJson,
     now,
     now,
-    productData.isAvailable ? 1 : 0
+    1
   );
 
   return result.lastInsertRowid;
