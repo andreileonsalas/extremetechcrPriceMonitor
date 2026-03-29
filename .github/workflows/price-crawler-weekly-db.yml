@@ -94,13 +94,13 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Download database
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           name: main-db
           path: data/
 
       - name: Download URL chunks
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           name: chunks
           path: chunks/
@@ -142,13 +142,13 @@ jobs:
         run: npm ci
 
       - name: Download main database (baseline)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           name: main-db
           path: data/
 
       - name: Download all worker databases
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           pattern: worker-db-*
           path: data/workers/
