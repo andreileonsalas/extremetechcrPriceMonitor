@@ -9,17 +9,46 @@
 /** @type {string} URL of the WooCommerce sitemap index */
 const SITEMAP_URL = 'https://extremetechcr.com/sitemap.xml';
 
-/** @type {number} Maximum concurrent browser pages used when scraping */
+/**
+ * When true, the scraper uses plain HTTP requests (axios) instead of a
+ * Playwright browser.  This is significantly faster because there is no
+ * browser startup time or JavaScript execution overhead.
+ *
+ * extremetechcr.com does NOT block plain HTTP requests, so this is safe.
+ * Set to false to revert to the Playwright browser (e.g. if Cloudflare
+ * starts blocking direct requests in the future).
+ *
+ * @type {boolean}
+ */
+const USE_HTTP_FETCHER = true;
+
+/**
+ * Maximum concurrent requests per batch.
+ * With HTTP fetching, each request completes in ~300-500 ms, so 10 concurrent
+ * requests per batch processes ~10 products every ~1 s + REQUEST_DELAY_MS.
+ * @type {number}
+ */
 const CONCURRENT_REQUESTS = 10;
 
-/** @type {number} Delay in milliseconds between request batches */
-const REQUEST_DELAY_MS = 250;
+/**
+ * Delay in milliseconds between request batches.
+ * 1 000 ms keeps the load on the store's server polite while still
+ * completing a full run of 3 500+ active products in under 10 minutes.
+ * @type {number}
+ */
+const REQUEST_DELAY_MS = 1000;
 
 /** @type {number} HTTP request timeout in milliseconds */
 const REQUEST_TIMEOUT_MS = 15000;
 
-/** @type {number} Maximum number of URLs to process per price-update run (rotates stale-first) */
-const MAX_URLS_PER_RUN = 3500;
+/**
+ * Maximum number of URLs to process per price-update run (stale-first).
+ * With HTTP fetching at ~600 products/min, 10 000 covers the entire catalogue
+ * (currently ~3 500–5 000 products) in roughly 6–15 minutes — well within the
+ * daily 300-minute job window.
+ * @type {number}
+ */
+const MAX_URLS_PER_RUN = 10000;
 
 /** @type {number} Number of times to retry scraping a product whose price came back null (0 = no retries) */
 const NULL_PRICE_RETRY_ATTEMPTS = 2;
@@ -136,6 +165,7 @@ const SELECTOR_PRODUCT_DESCRIPTION = '.woocommerce-product-details__short-descri
 
 module.exports = {
   SITEMAP_URL,
+  USE_HTTP_FETCHER,
   CONCURRENT_REQUESTS,
   REQUEST_DELAY_MS,
   REQUEST_TIMEOUT_MS,

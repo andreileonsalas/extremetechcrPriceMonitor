@@ -12,6 +12,9 @@
  *                        full database. Useful for quick one-off tests.
  *   FAIL_ON_NULL_PRICE   Set to 'true' to fail the job when too many null prices
  *                        are detected (threshold: NULL_PRICE_FAIL_THRESHOLD in config.js).
+ *   INCLUDE_INACTIVE     Set to 'true' to also process products marked inactive
+ *                        (isActive = 0).  Used by the weekly full-database review
+ *                        job to detect re-listed products and re-check 404 pages.
  */
 
 const { scrapeProduct } = require('../scraper/productScraper');
@@ -125,7 +128,9 @@ async function processProductUrl(url) {
  * Resolves the list of product URLs to process for this run.
  * Priority order:
  *  1. PRICE_UPDATE_URLS env var  (comma-separated, for targeted/test runs)
- *  2. Stale-first selection from the database, capped at MAX_URLS_PER_RUN
+ *  2. Stale-first selection from the database, capped at MAX_URLS_PER_RUN.
+ *     When INCLUDE_INACTIVE=true, inactive products (isActive=0) are also
+ *     included so the weekly review job can detect re-listed products.
  * @returns {string[]}
  */
 function resolveUrlsToProcess() {
@@ -137,7 +142,11 @@ function resolveUrlsToProcess() {
     console.log(`Using PRICE_UPDATE_URLS override: ${overrideUrls.length} URLs`);
     return overrideUrls;
   }
-  return getStaleProductUrls(MAX_URLS_PER_RUN);
+  const includeInactive = process.env.INCLUDE_INACTIVE === 'true';
+  if (includeInactive) {
+    console.log('INCLUDE_INACTIVE=true: processing active AND inactive products');
+  }
+  return getStaleProductUrls(MAX_URLS_PER_RUN, includeInactive);
 }
 
 /**

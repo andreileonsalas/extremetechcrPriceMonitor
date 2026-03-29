@@ -1,0 +1,73 @@
+name: Weekly Full-Database Price Review
+
+# Runs every Thursday at 1:00 AM UTC — checks EVERY product URL in the database,
+# including those previously marked inactive (isActive = 0), to detect if removed
+# products have been re-listed and to keep the full catalogue fresh.
+#
+# This job intentionally runs on Thursday (not Monday like the sitemap crawl) to
+# avoid concurrent git pushes and cache conflicts between the two weekly workflows.
+# The daily price crawler runs at 3 AM UTC and only covers active products, so this
+# Thursday 1 AM run also does not overlap with the daily job.
+
+on:
+  schedule:
+    - cron: '0 1 * * 4'   # Thursday 01:00 UTC
+  workflow_dispatch:
+    inputs:
+      fail_on_null_price:
+        description: 'Fail the job if null prices exceed the threshold'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  weekly-db-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        # Required when USE_HTTP_FETCHER=false in src/config.js.
+        # When USE_HTTP_FETCHER=true (default), this step is a no-op for the
+        # price scraper but is kept so the workflow works without modification
+        # if Cloudflare starts blocking HTTP requests and the flag is toggled.
+        run: npx playwright install --with-deps chromium
+
+      - name: Restore database from previous run
+        uses: actions/cache@v4
+        with:
+          path: data/prices.db
+          key: sqlite-db-v2-${{ github.run_id }}
+          restore-keys: sqlite-db-v2-
+
+      - name: Run weekly full-database price review (active + inactive)
+        env:
+          INCLUDE_INACTIVE: 'true'
+          FAIL_ON_NULL_PRICE: ${{ github.event.inputs.fail_on_null_price || 'false' }}
+        run: npm run prices
+
+      - name: Commit and push database ZIP
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/db.zip
+          git diff --staged --quiet || git commit -m "chore: update db.zip from weekly db review [skip ci]"
+          git pull --rebase
+          git push
