@@ -10,10 +10,10 @@
 const SITEMAP_URL = 'https://extremetechcr.com/sitemap.xml';
 
 /** @type {number} Maximum concurrent browser pages used when scraping */
-const CONCURRENT_REQUESTS = 5;
+const CONCURRENT_REQUESTS = 10;
 
 /** @type {number} Delay in milliseconds between request batches */
-const REQUEST_DELAY_MS = 500;
+const REQUEST_DELAY_MS = 250;
 
 /** @type {number} HTTP request timeout in milliseconds */
 const REQUEST_TIMEOUT_MS = 15000;
