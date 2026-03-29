@@ -21,6 +21,12 @@ const REQUEST_TIMEOUT_MS = 15000;
 /** @type {number} Maximum number of URLs to process per price-update run (rotates stale-first) */
 const MAX_URLS_PER_RUN = 500;
 
+/** @type {number} Number of times to retry scraping a product whose price came back null (0 = no retries) */
+const NULL_PRICE_RETRY_ATTEMPTS = 2;
+
+/** @type {number} Milliseconds to wait between null-price retry attempts */
+const NULL_PRICE_RETRY_DELAY_MS = 10000;
+
 /** @type {string} Path to the SQLite database file */
 const DB_PATH = './data/prices.db';
 
@@ -110,6 +116,8 @@ module.exports = {
   REQUEST_DELAY_MS,
   REQUEST_TIMEOUT_MS,
   MAX_URLS_PER_RUN,
+  NULL_PRICE_RETRY_ATTEMPTS,
+  NULL_PRICE_RETRY_DELAY_MS,
   DB_PATH,
   DB_ZIP_PATH,
   USER_AGENT,

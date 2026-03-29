@@ -21,9 +21,9 @@ const {
   exportDatabaseToZip,
   validateDatabaseIntegrity,
 } = require('../database/db');
-const { fetchUrlsInBatches } = require('../scraper/sitemapReader');
+const { fetchUrlsInBatches, delay } = require('../scraper/sitemapReader');
 const { closeBrowser } = require('../scraper/browser');
-const { MAX_URLS_PER_RUN } = require('../config');
+const { MAX_URLS_PER_RUN, NULL_PRICE_RETRY_ATTEMPTS, NULL_PRICE_RETRY_DELAY_MS } = require('../config');
 
 /** How often (in products processed) to export an intermediate db.zip snapshot. */
 const EXPORT_INTERVAL = 50;
@@ -43,7 +43,7 @@ let nullPriceCount = 0;
  */
 async function processProductUrl(url) {
   try {
-    const data = await scrapeProduct(url);
+    let data = await scrapeProduct(url);
 
     if (data.statusCode === 404) {
       console.log(`Product 404, marking inactive: ${url}`);
@@ -54,6 +54,23 @@ async function processProductUrl(url) {
     if (!data.isProduct) {
       console.log(`Not a product page, skipping: ${url}`);
       return;
+    }
+
+    // If price is null it may be a temporary block — wait and retry
+    let attempt = 0;
+    while (data.price === null && attempt < NULL_PRICE_RETRY_ATTEMPTS) {
+      attempt += 1;
+      const reason = data.priceDebug || 'unknown reason';
+      const delaySecs = NULL_PRICE_RETRY_DELAY_MS / 1000;
+      console.warn(`  [NULL PRICE] ${url} | Reason: ${reason} | Retry ${attempt}/${NULL_PRICE_RETRY_ATTEMPTS} in ${delaySecs}s...`);
+      await delay(NULL_PRICE_RETRY_DELAY_MS);
+      const retryData = await scrapeProduct(url);
+      // Only keep the retry result if the page is still a valid product (not a 404 or redirect)
+      if (retryData.statusCode === 404 || !retryData.isProduct) {
+        console.warn(`  [NULL PRICE] ${url} | Retry ${attempt} returned invalid page (status: ${retryData.statusCode}, isProduct: ${retryData.isProduct}), stopping retries`);
+        break;
+      }
+      data = retryData;
     }
 
     const productId = upsertProduct(data);
