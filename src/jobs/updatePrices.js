@@ -30,6 +30,7 @@ const {
   getStaleProductUrls,
   exportDatabaseToZip,
   validateDatabaseIntegrity,
+  closeDatabase,
 } = require('../database/db');
 const { fetchUrlsInBatches, delay } = require('../scraper/sitemapReader');
 const { closeBrowser } = require('../scraper/browser');
@@ -186,6 +187,7 @@ async function runPriceUpdate() {
   }
 
   await closeBrowser();
+  closeDatabase();
   console.log(`Price update job complete. Processed ${processedCount} products.`);
 
   if (nullPriceCount > 0) {
@@ -201,10 +203,12 @@ async function runPriceUpdate() {
 
 // Run when executed directly
 if (require.main === module) {
-  runPriceUpdate().catch((err) => {
-    console.error('Price update job failed:', err);
-    process.exit(1);
-  });
+  runPriceUpdate()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('Price update job failed:', err);
+      process.exit(1);
+    });
 }
 
 module.exports = { runPriceUpdate, processProductUrl, resolveUrlsToProcess };

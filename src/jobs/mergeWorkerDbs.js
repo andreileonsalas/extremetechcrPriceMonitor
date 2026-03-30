@@ -226,6 +226,7 @@ function runMerge(workersDir) {
 // Run when executed directly (npm run merge-workers)
 if (require.main === module) {
   runMerge();
+  process.exit(0);
 }
 
 module.exports = { mergeFromWorkerDb, runMerge };
