@@ -60,7 +60,8 @@ All configuration is in `src/config.js`. Key settings:
 - `SITEMAP_URL` - The WooCommerce sitemap URL
 - `CONCURRENT_REQUESTS` - Max parallel browser pages per batch (default: 5)
 - `REQUEST_DELAY_MS` - Delay between batches in ms (default: 500)
-- `MAX_URLS_PER_RUN` - Products scraped per daily run, stale-first (default: 3500)
+- `MAX_URLS_PER_RUN` - Products scraped per daily run, stale-first (default: 10000)
+- `USE_HTTP_FETCHER` - **Always false** — the site uses Cloudflare managed challenge; plain HTTP is permanently blocked regardless of headers or rate. Only a real Chromium browser (Playwright + stealth) can pass the JS challenge.
 - `NULL_PRICE_RETRY_ATTEMPTS` - Retries when a price comes back null (default: 2)
 - `NULL_PRICE_RETRY_BACKOFF_MULTIPLIER` - Exponential backoff multiplier per retry (default: 2)
 - `NULL_PRICE_FAIL_THRESHOLD` - Max null prices before job fails (default: 50)

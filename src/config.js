@@ -11,44 +11,61 @@ const SITEMAP_URL = 'https://extremetechcr.com/sitemap.xml';
 
 /**
  * When true, the scraper uses plain HTTP requests (axios) instead of a
- * Playwright browser.  This is significantly faster because there is no
- * browser startup time or JavaScript execution overhead.
+ * Playwright browser.
  *
- * extremetechcr.com does NOT block plain HTTP requests, so this is safe.
- * Set to false to revert to the Playwright browser (e.g. if Cloudflare
- * starts blocking direct requests in the future).
+ * extremetechcr.com sits behind Cloudflare's *managed challenge* (cType:
+ * "managed"), which requires JavaScript execution to auto-solve.  Plain HTTP
+ * clients (axios, curl, raw HTTPS) all receive a 403 "Just a moment…"
+ * challenge page that can never be resolved without a real browser.
+ *
+ * Set to false (the default) to use the Playwright stealth browser, which
+ * solves the CF challenge automatically and then fetches the real page.
+ * Set to true only if the site removes Cloudflare protection in the future.
  *
  * @type {boolean}
  */
-const USE_HTTP_FETCHER = true;
+const USE_HTTP_FETCHER = false;
 
 /**
- * Maximum concurrent requests per batch.
- * With HTTP fetching, each request completes in ~300-500 ms, so 10 concurrent
- * requests per batch processes ~10 products every ~1 s + REQUEST_DELAY_MS.
+ * Maximum concurrent Playwright pages open at the same time.
+ * All pages share one browser context so the Cloudflare clearance cookie
+ * is solved once and reused across every page in a run.
+ * With resource-blocking enabled each page loads in ~800–1 500 ms, so
+ * 5 concurrent pages processes ~5 products every ~1.5 s + REQUEST_DELAY_MS.
+ * Raising this above 5 gives diminishing returns and increases memory use.
  * @type {number}
  */
-const CONCURRENT_REQUESTS = 10;
+const CONCURRENT_REQUESTS = 5;
 
 /**
  * Delay in milliseconds between request batches.
- * 1 000 ms keeps the load on the store's server polite while still
- * completing a full run of 3 500+ active products in under 10 minutes.
+ * 500 ms is enough to be polite to the server; the Cloudflare clearance
+ * cookie keeps the session alive across batches so challenges are not
+ * re-triggered by the delay itself.
  * @type {number}
  */
-const REQUEST_DELAY_MS = 1000;
+const REQUEST_DELAY_MS = 500;
 
 /** @type {number} HTTP request timeout in milliseconds */
 const REQUEST_TIMEOUT_MS = 15000;
 
 /**
  * Maximum number of URLs to process per price-update run (stale-first).
- * With HTTP fetching at ~600 products/min, 10 000 covers the entire catalogue
- * (currently ~3 500–5 000 products) in roughly 6–15 minutes — well within the
- * daily 300-minute job window.
+ * This total is split evenly across WORKER_COUNT parallel jobs; each worker
+ * processes MAX_URLS_PER_RUN / WORKER_COUNT URLs.
  * @type {number}
  */
-const MAX_URLS_PER_RUN = 10000;
+const MAX_URLS_PER_RUN = 12000;
+
+/**
+ * Number of parallel GitHub Actions jobs used by the price-crawler workflow.
+ * The URL list is divided into this many equal chunks (chunks/chunk-N.json)
+ * during the prepare stage and each chunk is processed by one worker job.
+ * Raising this reduces wall-clock run time proportionally but increases
+ * concurrent GitHub Actions minutes consumed.
+ * @type {number}
+ */
+const WORKER_COUNT = 4;
 
 /** @type {number} Number of times to retry scraping a product whose price came back null (0 = no retries) */
 const NULL_PRICE_RETRY_ATTEMPTS = 2;
@@ -170,6 +187,7 @@ module.exports = {
   REQUEST_DELAY_MS,
   REQUEST_TIMEOUT_MS,
   MAX_URLS_PER_RUN,
+  WORKER_COUNT,
   NULL_PRICE_RETRY_ATTEMPTS,
   NULL_PRICE_RETRY_DELAY_MS,
   NULL_PRICE_RETRY_BACKOFF_MULTIPLIER,

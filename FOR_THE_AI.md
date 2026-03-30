@@ -28,8 +28,8 @@ GitHub Pages (serves from root of main branch)
 | File | Purpose |
 |---|---|
 | `src/config.js` | ALL tunable constants — edit here first |
-| `src/scraper/httpFetcher.js` | Plain HTTP fetcher using axios (default, fast) |
-| `src/scraper/browser.js` | Routes to httpFetcher or Playwright based on USE_HTTP_FETCHER flag |
+| `src/scraper/httpFetcher.js` | Plain HTTP fetcher using axios (kept for reference; NOT usable — site requires browser) |
+| `src/scraper/browser.js` | Routes to httpFetcher or Playwright based on USE_HTTP_FETCHER flag (always false) |
 | `src/scraper/productScraper.js` | Cheerio HTML parser, WooCommerce selectors |
 | `src/scraper/sitemapReader.js` | sitemap.xml fetcher + URL filter |
 | `src/database/db.js` | SQLite CRUD, schema, integrity check |
@@ -41,13 +41,13 @@ GitHub Pages (serves from root of main branch)
 
 ## CONFIG.JS VALUES (current)
 ```js
-USE_HTTP_FETCHER = true      // use plain HTTP (axios) instead of Playwright browser
-                              // set false if Cloudflare starts blocking HTTP requests
-CONCURRENT_REQUESTS = 10     // parallel requests per batch
-REQUEST_DELAY_MS    = 1000   // ms between batches (polite gap for HTTP)
+USE_HTTP_FETCHER = false     // MUST be false — site uses Cloudflare managed challenge;
+                              // plain HTTP always returns 403 regardless of headers/rate.
+                              // Only a real Chromium browser can solve the CF JS challenge.
+CONCURRENT_REQUESTS = 5      // parallel Playwright pages (shared context → shared CF cookie)
+REQUEST_DELAY_MS    = 500    // ms between batches
 REQUEST_TIMEOUT_MS  = 15000  // ms per request
-MAX_URLS_PER_RUN    = 10000  // max URLs processed per run (covers full catalogue daily)
-                              // with HTTP at ~600/min → 3500 products in ~6 min
+MAX_URLS_PER_RUN    = 10000  // max URLs per run (~170–200 min for full 12 000-product catalogue)
 NULL_PRICE_RETRY_ATTEMPTS         = 2
 NULL_PRICE_RETRY_BACKOFF_MULTIPLIER = 2   // exponential: 10s → 20s → 40s
 NULL_PRICE_FAIL_THRESHOLD         = 50   // max nulls before job fails (FAIL_ON_NULL_PRICE=true)
@@ -57,14 +57,14 @@ SITEMAP_URL         = 'https://extremetechcr.com/sitemap.xml'
 ```
 
 ## SPEED / CRAWLER THROUGHPUT
-With USE_HTTP_FETCHER=true (default):
-- HTTP request time per product: ~200–400 ms (no browser overhead)
-- CONCURRENT_REQUESTS=10 + REQUEST_DELAY_MS=1000 → ~10 products / 1.4 s ≈ 430 products/min
-- 3500 active products → ~8 min per daily run
-- Set USE_HTTP_FETCHER=false to revert to Playwright (~62 products/min, ~56 min for 3500 URLs)
+With USE_HTTP_FETCHER=false (Playwright + stealth + resource blocking):
+- Per-page time: ~800–1 500 ms (CF challenge solved once, reused via shared context cookie)
+- CONCURRENT_REQUESTS=5 + REQUEST_DELAY_MS=500 → ~60–70 products/min
+- 12 000 active products → ~170–200 min per daily run (within 300-min job limit)
+- Resource blocking (images/fonts/media/CSS) reduces load from ~3 s to ~1.2 s per page
 
-To switch back to Playwright (if CF blocking starts): set USE_HTTP_FETCHER=false in src/config.js.
-Diagnose first: `node experiments/cloudflare-bypass/probe.js [url]`
+**DO NOT set USE_HTTP_FETCHER=true** — confirmed blocked by Cloudflare managed challenge.
+Diagnose with: `node experiments/cloudflare-bypass/probe.js [url]`
 
 ## DATABASE SCHEMA
 ```sql
@@ -107,19 +107,35 @@ The `.summary`/`.entry-summary` selectors are kept as fallback for standard WooC
 
 ## CLOUDFLARE / BOT DETECTION
 
-**CONFIRMED: The site is NOT blocking scraper requests.** The root cause of null prices was a CSS selector mismatch — the site uses Woodmart/Elementor theme where prices are in `.wd-single-price`, not `.summary`/`.entry-summary`. This has been fixed.
+**CONFIRMED (2026-03-29): extremetechcr.com uses Cloudflare managed challenge (`cType: managed`).**
+All plain HTTP requests (axios, got-scraping, curl, raw HTTPS) receive a 403 "Just a moment…"
+challenge page — permanently, regardless of headers, User-Agent, rate, or delay.
+A real Chromium browser with JavaScript execution is required to solve the challenge.
 
-Cloudflare detection is still in place (`isCloudflareChallenge()` in productScraper.js) as a safety net:
-- Checks for `challenges.cloudflare.com`, `cf-browser-verification`, `__cf_chl_f_tk`, `jschl-answer`
-- If detected: retried with exponential backoff, then skipped with `[CLOUDFLARE]` log tag
-- CF title detection in browser.js matches partial `'Just a moment'` + `'Attention Required! | Cloudflare'`
+Multi-library probe results (see `experiments/cloudflare-bypass/results.md` for full data):
 
-**If CF blocking starts (probe first):**
+| Library | Type | Works? |
+|---|---|---|
+| `axios` | Plain HTTP | ❌ Always 403 |
+| `got-scraping` (Apify JA3 TLS spoof) | HTTP + TLS fingerprint | ❌ Always 403 |
+| `tls-client` (Go TLS imitation) | HTTP + TLS fingerprint | ❌ Can't compile on Node 24 |
+| `puppeteer` headless | Real Chromium | ✅ ~3 600 ms/page |
+| `puppeteer-extra` + stealth | Real Chromium + stealth | ✅ ~1 900 ms/page |
+| `playwright-extra` + stealth + resource blocking | Real Chromium + stealth | ✅ ~1 200 ms/page |
+
+**Current approach:** `playwright-extra` + stealth + context-level resource blocking (fastest).
+The shared browser context preserves the `cf_clearance` cookie after the first challenge,
+so subsequent pages skip the challenge entirely.
+
+Cloudflare detection (`isCloudflareChallenge()` in productScraper.js) remains as a safety net:
+- Detects: `challenges.cloudflare.com`, `cf-browser-verification`, `__cf_chl_f_tk`, `jschl-answer`
+- If detected after Playwright fetch: retried with exponential backoff, then skipped with `[CLOUDFLARE]`
+
+To diagnose / re-run probe:
 ```bash
 node experiments/cloudflare-bypass/probe.js [url]
 # Writes experiments/cloudflare-bypass/results.md
 ```
-Bypass options (cheapest first): self-hosted runner (residential IP), CF Browser Rendering API (~$5/mo), residential proxies (~$15+/mo).
 
 ## JOBS EXPLAINED
 
@@ -132,19 +148,20 @@ Bypass options (cheapest first): self-hosted runner (residential IP), CF Browser
 
 ### Daily Price Crawler (every day 3am UTC)
 - Calls `getStaleProductUrls(MAX_URLS_PER_RUN, false)` → **active products only** (isActive=1), stale-first
-- Uses HTTP fetcher (axios) by default — no Playwright browser launched
-- For each URL: scrapes via HTTP, upserts product, records price
+- Uses Playwright+stealth browser (USE_HTTP_FETCHER=false) — shared context reuses CF clearance cookie
+- Resource blocking (images/fonts/media/CSS) enabled at context level → ~1.2 s/page
+- For each URL: scrapes via browser, upserts product, records price
 - 404 responses → `markProductInactive(url)` — product removed from the daily queue
 - Exports db.zip every 50 products (progress save in case of cancellation)
 - Runs `validateDatabaseIntegrity()` at end → logs CRITICAL warnings
 - Commits db.zip with `if: always()` so partial runs are preserved
-- Job timeout: 300 minutes (5 hours)
+- Job timeout: 300 minutes (5 hours) — sufficient for full 12 000-product catalogue
 
-### Weekly Full-Database Price Review (Thursday 1am UTC)  — NEW
+### Weekly Full-Database Price Review (Thursday 1am UTC)
 - Sets env `INCLUDE_INACTIVE=true` → calls `getStaleProductUrls(MAX_URLS_PER_RUN, true)`
 - Includes **all** products (active AND inactive) — detects if 404 products were re-listed
 - Re-activates previously-inactive products if they return a valid page
-- Same HTTP fetcher as daily job; runs before the daily job (1am vs 3am)
+- Same Playwright browser as daily job; runs before the daily job (1am vs 3am)
 - Does NOT overlap with sitemap crawl (Monday vs Thursday)
 
 ### Sample Crawler (manual trigger only)
@@ -232,12 +249,13 @@ npm test            # both
 | Symptom | Cause | Fix |
 |---|---|---|
 | All products show "Unknown" / "Price unavailable" | Sitemap ran but price crawler didn't | Run price crawler or `npm run seed` + commit db.zip |
-| Price crawler cancelled after 6h | Too many URLs or slow site | Already fixed: MAX_URLS_PER_RUN=3500, timeout-minutes=300, if:always commit |
+| `[CLOUDFLARE]` warnings in price crawler | Playwright stealth not working or IP flagged | Run `node experiments/cloudflare-bypass/probe.js` to diagnose; check results.md |
+| Price crawler cancelled after 6h | Too many URLs or slow site | MAX_URLS_PER_RUN=10000, timeout-minutes=300, if:always commit already set |
 | GitHub Pages shows 404 at root URL | index.html missing from root | Already fixed: root index.html with meta-refresh |
 | Images don't load | imageUrl null (not yet scraped) or hotlink block | Already fixed: onerror fallback to placeholder |
 | integrity check CRITICAL no price | <20% of products have been priced yet | Normal after fresh deploy; price crawler needs to run several times |
 | E2e tests fail with wrong product data | db.zip has wrong content | Tests recreate db.zip themselves; don't need to fix db.zip for tests |
-| CF challenge blocks requests | Playwright stealth not working or IP flagged | Run experiments/cloudflare-bypass/probe.js to diagnose |
+| Someone sets USE_HTTP_FETCHER=true | Previous agent mistake — HTTP always 403 | Revert to false; see CLOUDFLARE section above for proof |
 
 ## PRICE FORMAT EDGE CASES
 ```

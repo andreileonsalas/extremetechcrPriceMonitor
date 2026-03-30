@@ -8,15 +8,20 @@
  * to change: sitemap URL, concurrency, delay, timeouts, DB paths, selectors.
  *
  * Environment variables (workflow runtime controls, not configuration):
- *   PRICE_UPDATE_URLS    Comma-separated list of URLs to process instead of the
- *                        full database. Useful for quick one-off tests.
- *   FAIL_ON_NULL_PRICE   Set to 'true' to fail the job when too many null prices
- *                        are detected (threshold: NULL_PRICE_FAIL_THRESHOLD in config.js).
- *   INCLUDE_INACTIVE     Set to 'true' to also process products marked inactive
- *                        (isActive = 0).  Used by the weekly full-database review
- *                        job to detect re-listed products and re-check 404 pages.
+ *   PRICE_UPDATE_URLS       Comma-separated list of URLs to process instead of the
+ *                           full database. Useful for quick one-off tests.
+ *   PRICE_UPDATE_CHUNK_FILE Path to a JSON file containing an array of URLs to
+ *                           process (written by the prepare stage of the parallel
+ *                           pipeline). Takes priority over DB stale-first selection
+ *                           but lower priority than PRICE_UPDATE_URLS.
+ *   FAIL_ON_NULL_PRICE      Set to 'true' to fail the job when too many null prices
+ *                           are detected (threshold: NULL_PRICE_FAIL_THRESHOLD in config.js).
+ *   INCLUDE_INACTIVE        Set to 'true' to also process products marked inactive
+ *                           (isActive = 0).  Used by the weekly full-database review
+ *                           job to detect re-listed products and re-check 404 pages.
  */
 
+const fs = require('fs');
 const { scrapeProduct } = require('../scraper/productScraper');
 const {
   upsertProduct,
@@ -127,8 +132,9 @@ async function processProductUrl(url) {
 /**
  * Resolves the list of product URLs to process for this run.
  * Priority order:
- *  1. PRICE_UPDATE_URLS env var  (comma-separated, for targeted/test runs)
- *  2. Stale-first selection from the database, capped at MAX_URLS_PER_RUN.
+ *  1. PRICE_UPDATE_URLS env var      (comma-separated, for targeted/test runs)
+ *  2. PRICE_UPDATE_CHUNK_FILE env var (JSON array file, written by prepare stage)
+ *  3. Stale-first selection from the database, capped at MAX_URLS_PER_RUN.
  *     When INCLUDE_INACTIVE=true, inactive products (isActive=0) are also
  *     included so the weekly review job can detect re-listed products.
  * @returns {string[]}
@@ -141,6 +147,12 @@ function resolveUrlsToProcess() {
       .filter(Boolean);
     console.log(`Using PRICE_UPDATE_URLS override: ${overrideUrls.length} URLs`);
     return overrideUrls;
+  }
+  if (process.env.PRICE_UPDATE_CHUNK_FILE) {
+    const chunkPath = process.env.PRICE_UPDATE_CHUNK_FILE;
+    const urls = JSON.parse(fs.readFileSync(chunkPath, 'utf8'));
+    console.log(`Using chunk file ${chunkPath}: ${urls.length} URLs`);
+    return urls;
   }
   const includeInactive = process.env.INCLUDE_INACTIVE === 'true';
   if (includeInactive) {
