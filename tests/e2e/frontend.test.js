@@ -249,13 +249,13 @@ test.describe('Frontend - Status Filters', () => {
   });
 
   test('inactive product is hidden by default', async ({ page }) => {
-    // Only active products visible by default (filterActive=checked, filterInactive=unchecked)
+    // Only active products visible by default (filterIncludeInactive unchecked)
     const cards = page.locator('.product-card');
     await expect(cards).toHaveCount(5);
   });
 
-  test('shows inactive product when filterInactive is checked', async ({ page }) => {
-    await page.check('#filterInactive');
+  test('shows inactive product when filterIncludeInactive is checked', async ({ page }) => {
+    await page.check('#filterIncludeInactive');
     await page.waitForTimeout(300);
     const cards = page.locator('.product-card');
     // All 6 products: 5 active + 1 inactive (Memoria RAM)
@@ -263,7 +263,7 @@ test.describe('Frontend - Status Filters', () => {
   });
 
   test('inactive product shows "Ya no disponible" badge', async ({ page }) => {
-    await page.check('#filterInactive');
+    await page.check('#filterIncludeInactive');
     await page.waitForTimeout(300);
     await page.fill('#searchInput', 'memoria');
     await page.waitForTimeout(400);
@@ -272,27 +272,13 @@ test.describe('Frontend - Status Filters', () => {
   });
 
   test('inactive product card links back to its URL on extremetechcr.com', async ({ page }) => {
-    await page.check('#filterInactive');
+    await page.check('#filterIncludeInactive');
     await page.waitForTimeout(300);
     await page.fill('#searchInput', 'memoria');
     await page.waitForTimeout(400);
     const link = page.locator('.product-card .card-footer a').first();
     const href = await link.getAttribute('href');
     expect(href).toContain('memoria-ram-para-pc-8gb-2400mhz-oem');
-  });
-
-  test('hiding active products shows only inactive', async ({ page }) => {
-    await page.uncheck('#filterActive');
-    await page.check('#filterInactive');
-    await page.waitForTimeout(300);
-    const cards = page.locator('.product-card');
-    await expect(cards).toHaveCount(1);
-  });
-
-  test('unchecking both existence filters shows no products', async ({ page }) => {
-    await page.uncheck('#filterActive');
-    await page.waitForTimeout(300);
-    await expect(page.locator('#productCount')).toContainText('0');
   });
 });
 
