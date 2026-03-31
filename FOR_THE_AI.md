@@ -235,13 +235,40 @@ Products in seed: Lenovo IdeaPad Slim 3, Intel Pentium G6405, MSI MP225V, Razer 
 - **Only shows products with an open price record** (INNER JOIN, not LEFT JOIN)
 - Image: shows real img if imageUrl stored; on error hides img and shows "View price history" placeholder
 - Clicking any card opens price history modal with Chart.js line chart
-- Pagination: 60 products per page, search, sort by name/price
+- Pagination: 60 products per page, search, sort by name/price/discount/increase
+
+### Dark mode
+- Inline `<script>` in `<head>` sets `data-bs-theme` before CSS loads (prevents FOUC)
+- Reads `localStorage` for saved preference, falls back to `prefers-color-scheme`
+- 🌙/☀️ toggle button in navbar persists choice to `localStorage`
+
+### Columns selector (desktop only)
+- `3 / 4` button group (`d-none d-md-inline-flex`) in toolbar
+- Swaps `row-cols-md-3` ↔ `row-cols-md-4` on the grid via regex
+- Preference persisted to `localStorage`
+
+### Price-change badges
+- `calcPriceChangePct(product)` uses `prevPrice` (most recent closed `priceHistory` row) vs current price
+- `buildPriceChangeBadge()` renders `↓ X%` (green) / `↑ X%` (red) on cards when |change| ≥ 1%
+- Sort options: **Mayor bajada** (`discount-desc`) and **Mayor subida** (`increase-desc`)
+- SQL: `queryAllProducts()` includes correlated subquery for `prevPrice`:
+  ```sql
+  (SELECT ph2.price FROM priceHistory ph2
+   WHERE ph2.productId = p.id AND ph2.endDate IS NOT NULL
+   ORDER BY ph2.endDate DESC LIMIT 1) AS prevPrice
+  ```
+
+### SEO meta tags
+- `<title>` and `<meta name="description">` added to `public/index.html`
+
+### UniMart cross-link
+- Navbar link to `https://andreileonsalas.github.io/unimartMonitor/`
 
 ## TESTING
 
 ```bash
 npm run test:unit   # jest — 134 tests, pure JS, no network
-npm run test:e2e    # playwright — 29 tests, runs local server on port 8080
+npm run test:e2e    # playwright — 40 tests, runs local server on port 8080
 npm test            # both
 ```
 
@@ -252,6 +279,10 @@ npm test            # both
 - Intel Pentium Gold G6405 (CPU1011) — price 39900 CRC
 - MSI PRO MP225V 22 100Hz (MT2736) — price 34900 CRC  
 - Razer Kraken Kitty Edition V2 Pro Rosa (HE6006) — sale 67901, original 69900, -3%
+- Dark mode toggle persists to `localStorage`
+- Columns selector (3/4) persists to `localStorage`
+- Discount sort (Mayor bajada / Mayor subida)
+- Price-change badge visible on discounted cards
 
 ## GITHUB PAGES URL
 - Root: https://andreileonsalas.github.io/extremetechcrPriceMonitor/
