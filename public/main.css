@@ -211,3 +211,14 @@ body {
   background: rgba(255,193,7,0.15);
   color: #ffc107;
 }
+
+/* Email notification form inside the price modal */
+.notify-email-form {
+  background-color: #f8f9fa;
+  font-size: 0.875rem;
+}
+
+[data-bs-theme="dark"] .notify-email-form {
+  background-color: #2b2f38;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}

@@ -128,6 +128,8 @@ const storageAdapter = {
 
 /*
 // ── OPTION B: Any REST backend (Node, Python, PHP, etc.) ──────────────────────
+// ⚠️  REQUIRES A BACKEND SERVER — there is no backend today.
+//     Use this only if you add a server (Node/Express, Firebase Cloud Functions, etc.)
 // Works with any server that stores data — MongoDB, PostgreSQL, S3, DynamoDB…
 // HOW TO SWITCH:
 //   1. Create three endpoints on your server:
@@ -226,6 +228,8 @@ const emailAdapter = {
 
 /*
 // ── OPTION B: Custom backend endpoint (Node, Firebase Functions, etc.) ─────────
+// ⚠️  REQUIRES A BACKEND SERVER — there is no backend today.
+//     If you ever add a server, this is ready to wire in.
 // Works with any backend that can send email — SendGrid, Mailgun, AWS SES,
 // Nodemailer, Resend, etc.
 // HOW TO SWITCH:
@@ -360,8 +364,8 @@ let colsPerRow = (() => {
          name:             string,
          addedAt:          ISO string,
          priceAtAddition:  number | null,
-         notifyByEmail:    boolean,   // reserved — needs SMTP / backend
-         notifyEmail:      string,    // reserved — needs SMTP / backend
+         notifyByEmail:    boolean,   // set to true by sendPriceAlert() — needs emailAdapter configured
+         notifyEmail:      string,    // persisted by sendPriceAlert() when user enters their email
        }
      }
    }
@@ -398,8 +402,8 @@ function addFavorite(product) {
     name: product.name || UNKNOWN_PRODUCT_NAME,
     addedAt: new Date().toISOString(),
     priceAtAddition: product.price ?? null,
-    notifyByEmail: false, // reserved — needs SMTP / backend
-    notifyEmail: '',      // reserved — needs SMTP / backend
+    notifyByEmail: false, // used by sendPriceAlert() — enable via emailAdapter
+    notifyEmail: '',      // persisted by sendPriceAlert() when user enters their email
   };
   saveAppData(data);
 }
@@ -448,6 +452,67 @@ function updateFavoritesFilterLabel() {
   const count = getFavoriteCount();
   btn.textContent = count > 0 ? `⭐ Mis favoritos (${count})` : '⭐ Mis favoritos';
   btn.classList.toggle('active', filterOnlyFavorites);
+}
+
+/**
+ * Syncs the "🔔 Notificarme por correo" button in the price modal.
+ * Enables the button when emailAdapter.isAvailable() is true;
+ * disables it with an explanatory tooltip otherwise.
+ * Also pre-fills the email input with any email saved in the favourite entry,
+ * and hides the email form whenever a different product is opened.
+ * @param {number} productId
+ */
+function updateModalNotifyBtn(productId) {
+  const btn = document.getElementById('modalNotifyBtn');
+  if (!btn) return;
+
+  const available = emailAdapter.isAvailable();
+  btn.disabled = !available;
+  btn.title = available
+    ? ''
+    : 'Notificaciones por correo no configuradas. Ver el bloque emailAdapter en main.js para habilitarlas.';
+  btn.dataset.productId = productId;
+
+  // Pre-fill the email input from the saved favourite entry (if any)
+  const emailInput = document.getElementById('notifyEmailInput');
+  if (emailInput) {
+    const entry = getFavorites()[String(productId)];
+    emailInput.value = (entry && entry.notifyEmail) || '';
+  }
+
+  // Reset the feedback text and hide the form when switching products
+  const form = document.getElementById('notifyEmailForm');
+  if (form) form.classList.add('d-none');
+  const feedback = document.getElementById('notifyEmailFeedback');
+  if (feedback) { feedback.className = 'small mt-1'; feedback.textContent = ''; }
+}
+
+/**
+ * Sends a price-alert email for a favourited product via emailAdapter.
+ * Persists the email address in the favourite entry so it is pre-filled next time.
+ * @param {number} productId - Database ID of the product.
+ * @param {string} email - Recipient email address.
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+async function sendPriceAlert(productId, email) {
+  const product = allProducts.find((p) => p.id === productId);
+  if (!product) return { ok: false, error: 'Producto no encontrado' };
+
+  // Save the email in the favourite entry so the form is pre-filled next time
+  const data = loadAppData();
+  if (data.favorites[String(productId)]) {
+    data.favorites[String(productId)].notifyByEmail = true;
+    data.favorites[String(productId)].notifyEmail = email;
+    saveAppData(data);
+  }
+
+  return emailAdapter.send({
+    toEmail: email,
+    productName: product.name || UNKNOWN_PRODUCT_NAME,
+    productUrl: product.url,
+    currentPrice: product.price,
+    priceAtAddition: (data.favorites[String(productId)] || {}).priceAtAddition ?? product.price,
+  });
 }
 
 /* =========================================================
@@ -1093,8 +1158,9 @@ function openPriceModal(productId, name) {
 
   renderPriceChart(productId, selectedChartDays);
 
-  // Update the in-modal favourite button
+  // Update the in-modal favourite and notify buttons
   updateModalFavoriteBtn(productId);
+  updateModalNotifyBtn(productId);
 
   // Store current productId for range changes and modal actions
   document.getElementById('priceModal').dataset.productId = productId;
@@ -1292,6 +1358,55 @@ function setupEventListeners() {
           favCardBtn.setAttribute('aria-label', favorited ? 'Quitar de favoritos' : 'Agregar a favoritos');
         }
         card.classList.toggle('is-favorite', favorited);
+      }
+    });
+  }
+
+  // In-modal notify button — toggle the email input form
+  const notifyBtn = document.getElementById('modalNotifyBtn');
+  if (notifyBtn) {
+    notifyBtn.addEventListener('click', () => {
+      const form = document.getElementById('notifyEmailForm');
+      if (form) form.classList.toggle('d-none');
+    });
+  }
+
+  // Email form submit — call sendPriceAlert() via emailAdapter
+  const notifySubmit = document.getElementById('notifyEmailSubmit');
+  if (notifySubmit) {
+    notifySubmit.addEventListener('click', async () => {
+      const productId = parseInt(document.getElementById('modalNotifyBtn').dataset.productId, 10);
+      const emailInput = document.getElementById('notifyEmailInput');
+      const feedback = document.getElementById('notifyEmailFeedback');
+      const email = emailInput ? emailInput.value.trim() : '';
+
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (feedback) {
+          feedback.className = 'small mt-1 text-danger';
+          feedback.textContent = 'Ingresa un correo electrónico válido.';
+        }
+        return;
+      }
+
+      if (feedback) {
+        feedback.className = 'small mt-1 text-muted';
+        feedback.textContent = 'Enviando…';
+      }
+      notifySubmit.disabled = true;
+
+      const result = await sendPriceAlert(productId, email);
+
+      notifySubmit.disabled = false;
+      if (result.ok) {
+        if (feedback) {
+          feedback.className = 'small mt-1 text-success';
+          feedback.textContent = '✓ Notificación enviada correctamente.';
+        }
+      } else {
+        if (feedback) {
+          feedback.className = 'small mt-1 text-danger';
+          feedback.textContent = `Error al enviar: ${result.error}`;
+        }
       }
     });
   }

@@ -129,6 +129,22 @@
             </div>
             <canvas id="priceChart"></canvas>
             <div id="priceChartEmpty" class="text-center text-muted py-3 d-none">No hay historial de precios para este rango.</div>
+
+            <!--
+              Email notification form — shown/hidden when the notify button is clicked.
+              The button itself is enabled/disabled automatically by updateModalNotifyBtn()
+              based on emailAdapter.isAvailable(). No changes needed here.
+              To enable: swap emailAdapter to OPTION A (EmailJS) or OPTION B (backend) in main.js.
+            -->
+            <div id="notifyEmailForm" class="d-none mt-3 p-3 border rounded notify-email-form">
+              <p class="small mb-2">Ingresa tu correo para recibir una alerta si el precio cambia:</p>
+              <div class="input-group input-group-sm">
+                <input type="email" id="notifyEmailInput" class="form-control"
+                       placeholder="tucorreo@ejemplo.com" autocomplete="email" />
+                <button id="notifyEmailSubmit" type="button" class="btn btn-primary">Notificarme</button>
+              </div>
+              <div id="notifyEmailFeedback" class="small mt-1"></div>
+            </div>
           </div>
           <div class="modal-footer modal-actions">
             <!-- Favourite toggle — wired in JS via updateModalFavoriteBtn() -->
@@ -136,17 +152,14 @@
                     class="btn btn-sm btn-outline-secondary me-auto">🤍 Agregar a favoritos</button>
 
             <!--
-              FUTURE: Email notification button.
-              Disabled until an SMTP service or backend endpoint is configured.
-              To enable:
-                1. Set up an email-sending service (e.g. SendGrid, Mailgun, Firebase Functions).
-                2. Remove the `disabled` attribute and `title` tooltip below.
-                3. Wire the click handler to call your email API with the product ID and user email.
+              Notify button — enabled/disabled automatically by JS (updateModalNotifyBtn).
+              To enable email sending: swap emailAdapter in main.js (see OPTION A / B there).
+              No changes needed in this HTML file.
             -->
-            <button type="button"
+            <button id="modalNotifyBtn" type="button"
                     class="btn btn-sm btn-outline-secondary"
                     disabled
-                    title="Requiere configuración de correo electrónico (SMTP / backend) — próximamente">
+                    title="Notificaciones por correo no configuradas. Ver emailAdapter en main.js.">
               🔔 Notificarme por correo
             </button>
 
