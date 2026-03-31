@@ -38,6 +38,7 @@ const {
  * @property {boolean} isProduct - Whether the page appears to be a product page.
  * @property {boolean} [isCloudflarePage] - True when the page is a Cloudflare challenge rather than the real product page.
  * @property {number} statusCode - HTTP status code returned.
+ * @property {string|null} publishedDate - ISO date string of when the product was published/created on the site (null if not found).
  * @property {string|undefined} priceDebug - Human-readable explanation of why price is null (only set when price is null).
  * @property {string|undefined} htmlDebug - Diagnostic snapshot of the page (title, price container, body excerpt) when price is null.
  */
@@ -118,6 +119,7 @@ function scrapeProductFromHtml(url, html, statusCode = 200) {
   const isAvailable = stockLocations.length > 0
     ? stockLocations.some((loc) => loc.quantity > 0)
     : checkAvailability($);
+  const publishedDate = extractPublishedDate($);
 
   return {
     url,
@@ -134,6 +136,7 @@ function scrapeProductFromHtml(url, html, statusCode = 200) {
     isAvailable,
     isProduct: true,
     statusCode,
+    publishedDate,
     ...(price === null ? { priceDebug, htmlDebug: buildHtmlDebug($) } : {}),
   };
 }
@@ -184,6 +187,7 @@ function buildEmptyResult(url, statusCode) {
     isAvailable: false,
     isProduct: false,
     statusCode,
+    publishedDate: null,
   };
 }
 
@@ -473,6 +477,68 @@ function checkAvailability($) {
 }
 
 /**
+ * Extracts the product publication date from the page.
+ * Tries in order:
+ *   1. Open Graph / Article meta tags (article:published_time)
+ *   2. JSON-LD schema.org Product/Thing with datePublished
+ *   3. Microdata itemprop="datePublished"
+ *   4. WordPress <time> element with published/entry-date class
+ * Returns a normalised ISO date string (YYYY-MM-DD) or null if not found.
+ * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
+ * @returns {string|null}
+ */
+function extractPublishedDate($) {
+  // 1. Open Graph article:published_time meta tag
+  const ogPublished = $('meta[property="article:published_time"]').attr('content');
+  if (ogPublished) return normaliseDate(ogPublished);
+
+  // 2. JSON-LD schema.org — search all <script type="application/ld+json"> blocks
+  let ldDate = null;
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (ldDate) return; // already found
+    try {
+      const data = JSON.parse($(el).html() || '{}');
+      const entries = Array.isArray(data) ? data : [data];
+      for (const entry of entries) {
+        const d = entry.datePublished || entry.dateCreated;
+        if (d) { ldDate = normaliseDate(d); break; }
+      }
+    } catch (_err) { /* ignore malformed JSON-LD */ }
+  });
+  if (ldDate) return ldDate;
+
+  // 3. Microdata itemprop="datePublished"
+  const microDate = $('[itemprop="datePublished"]').attr('content') ||
+    $('[itemprop="datePublished"]').attr('datetime');
+  if (microDate) return normaliseDate(microDate);
+
+  // 4. WordPress <time> element (entry-date / published classes)
+  const timeEl = $('time.published, time.entry-date').first();
+  if (timeEl.length) {
+    const dt = timeEl.attr('datetime');
+    if (dt) return normaliseDate(dt);
+  }
+
+  return null;
+}
+
+/**
+ * Normalises a date string (ISO 8601, partial, or similar) to a YYYY-MM-DD string.
+ * Returns null if the value cannot be parsed as a valid date.
+ * @param {string} raw - Raw date string.
+ * @returns {string|null}
+ */
+function normaliseDate(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  // Accept strings that begin with YYYY-MM-DD (with optional time portion)
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (!match) return null;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  return match[1]; // return just the date part YYYY-MM-DD
+}
+
+/**
  * Extracts the main product image URL from a WooCommerce product page.
  * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
  * @returns {string|null} Absolute URL of the product image, or null.
@@ -501,4 +567,6 @@ module.exports = {
   parseStockLocationText,
   checkAvailability,
   extractImageUrl,
+  extractPublishedDate,
+  normaliseDate,
 };

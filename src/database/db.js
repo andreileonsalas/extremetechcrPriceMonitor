@@ -18,6 +18,10 @@ const { DB_PATH, DB_ZIP_PATH } = require('../config');
  * @property {string} firstSeenAt
  * @property {string} lastCheckedAt
  * @property {number} isActive
+ * @property {string|null} publishedDateFirst - Publication date from the first scrape (frozen, never updated once set).
+ * @property {string|null} publishedDateLatest - Publication date from the most recent scrape (updated on every run).
+ * @property {string|null} publishedDateFirstScrapedAt - ISO timestamp of when publishedDateFirst was captured.
+ * @property {string|null} publishedDateLatestScrapedAt - ISO timestamp of when publishedDateLatest was last captured.
  */
 
 /**
@@ -71,7 +75,11 @@ function initializeSchema(db) {
       stockLocations TEXT,
       firstSeenAt TEXT NOT NULL,
       lastCheckedAt TEXT NOT NULL,
-      isActive INTEGER DEFAULT 1
+      isActive INTEGER DEFAULT 1,
+      publishedDateFirst TEXT,
+      publishedDateLatest TEXT,
+      publishedDateFirstScrapedAt TEXT,
+      publishedDateLatestScrapedAt TEXT
     );
 
     CREATE TABLE IF NOT EXISTS priceHistory (
@@ -93,6 +101,10 @@ function initializeSchema(db) {
   // Migrate older databases that may not have these columns yet
   addColumnIfMissing(db, 'products', 'stockLocations', 'TEXT');
   addColumnIfMissing(db, 'priceHistory', 'originalPrice', 'REAL');
+  addColumnIfMissing(db, 'products', 'publishedDateFirst', 'TEXT');
+  addColumnIfMissing(db, 'products', 'publishedDateLatest', 'TEXT');
+  addColumnIfMissing(db, 'products', 'publishedDateFirstScrapedAt', 'TEXT');
+  addColumnIfMissing(db, 'products', 'publishedDateLatestScrapedAt', 'TEXT');
 }
 
 /**
@@ -114,6 +126,10 @@ function addColumnIfMissing(db, table, column, type) {
 /**
  * Upserts a product record. If the URL already exists, updates metadata.
  * If new, inserts with the current timestamp as firstSeenAt.
+ * Published-date handling:
+ *   - publishedDateFirst is set once and never overwritten (frozen on first detection).
+ *   - publishedDateLatest is always updated to the most recently scraped value.
+ *   - The corresponding *ScrapedAt timestamps record when each value was captured.
  * @param {Object} productData - Scraped product data.
  * @param {string} productData.url
  * @param {string|null} productData.name
@@ -123,6 +139,7 @@ function addColumnIfMissing(db, table, column, type) {
  * @param {string|null} productData.imageUrl
  * @param {Array} [productData.stockLocations]
  * @param {boolean} productData.isAvailable
+ * @param {string|null} [productData.publishedDate]
  * @returns {number} The product ID.
  */
 function upsertProduct(productData) {
@@ -131,26 +148,59 @@ function upsertProduct(productData) {
   const stockJson = productData.stockLocations && productData.stockLocations.length > 0
     ? JSON.stringify(productData.stockLocations)
     : null;
+  const scrapedPublishedDate = productData.publishedDate || null;
 
-  const existing = db.prepare('SELECT id FROM products WHERE url = ?').get(productData.url);
+  const existing = db.prepare(
+    'SELECT id, publishedDateFirst FROM products WHERE url = ?'
+  ).get(productData.url);
 
   if (existing) {
-    db.prepare(`
-      UPDATE products
-      SET name = ?, sku = ?, category = ?, description = ?, imageUrl = ?,
-          stockLocations = ?, lastCheckedAt = ?, isActive = ?
-      WHERE url = ?
-    `).run(
-      productData.name,
-      productData.sku,
-      productData.category,
-      productData.description,
-      productData.imageUrl,
-      stockJson,
-      now,
-      1,
-      productData.url
-    );
+    if (existing.publishedDateFirst === null && scrapedPublishedDate !== null) {
+      // First time we see a date — freeze it and record the scrape timestamp
+      db.prepare(`
+        UPDATE products
+        SET name = ?, sku = ?, category = ?, description = ?, imageUrl = ?,
+            stockLocations = ?, lastCheckedAt = ?, isActive = ?,
+            publishedDateFirst = ?, publishedDateFirstScrapedAt = ?,
+            publishedDateLatest = ?, publishedDateLatestScrapedAt = ?
+        WHERE url = ?
+      `).run(
+        productData.name,
+        productData.sku,
+        productData.category,
+        productData.description,
+        productData.imageUrl,
+        stockJson,
+        now,
+        1,
+        scrapedPublishedDate,
+        now,
+        scrapedPublishedDate,
+        now,
+        productData.url
+      );
+    } else {
+      // publishedDateFirst already set (or no date available); only update latest
+      db.prepare(`
+        UPDATE products
+        SET name = ?, sku = ?, category = ?, description = ?, imageUrl = ?,
+            stockLocations = ?, lastCheckedAt = ?, isActive = ?,
+            publishedDateLatest = ?, publishedDateLatestScrapedAt = ?
+        WHERE url = ?
+      `).run(
+        productData.name,
+        productData.sku,
+        productData.category,
+        productData.description,
+        productData.imageUrl,
+        stockJson,
+        now,
+        1,
+        scrapedPublishedDate,
+        scrapedPublishedDate !== null ? now : null,
+        productData.url
+      );
+    }
     return existing.id;
   }
 
@@ -158,8 +208,11 @@ function upsertProduct(productData) {
   // treated as "most stale" by getStaleProductUrls and get processed first in the
   // next price-update run, even if they were just discovered by the sitemap job.
   const result = db.prepare(`
-    INSERT INTO products (url, name, sku, category, description, imageUrl, stockLocations, firstSeenAt, lastCheckedAt, isActive)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO products (url, name, sku, category, description, imageUrl, stockLocations,
+                          firstSeenAt, lastCheckedAt, isActive,
+                          publishedDateFirst, publishedDateFirstScrapedAt,
+                          publishedDateLatest, publishedDateLatestScrapedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     productData.url,
     productData.name,
@@ -170,7 +223,11 @@ function upsertProduct(productData) {
     stockJson,
     now,
     '1970-01-01T00:00:00.000Z',
-    1
+    1,
+    scrapedPublishedDate,
+    scrapedPublishedDate !== null ? now : null,
+    scrapedPublishedDate,
+    scrapedPublishedDate !== null ? now : null
   );
 
   return result.lastInsertRowid;

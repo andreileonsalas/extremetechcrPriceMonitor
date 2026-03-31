@@ -330,7 +330,7 @@ let selectedChartDays = DEFAULT_CHART_DAYS;
 let filterIncludeInactive = false;
 
 /** @type {boolean} Whether to show only products that are in stock (hides out-of-stock when true) */
-let filterOnlyInStock = false;
+let filterOnlyInStock = true;
 
 /** @type {boolean} Whether to show only products the user has added to their favourites */
 let filterOnlyFavorites = false;
@@ -649,6 +649,8 @@ function queryAllProducts() {
   const result = sqlDb.exec(`
     SELECT p.id, p.url, p.name, p.sku, p.category, p.imageUrl, p.lastCheckedAt,
            p.stockLocations, p.isActive, ph.price, ph.originalPrice, ph.currency,
+           p.publishedDateFirst, p.publishedDateLatest,
+           p.publishedDateFirstScrapedAt, p.publishedDateLatestScrapedAt,
            (
              SELECT ph2.price
              FROM priceHistory ph2
@@ -886,12 +888,12 @@ function renderProducts(products) {
       if (!product) return;
       if (isFavorite(productId)) {
         removeFavorite(productId);
-        btn.textContent = '🤍';
+        btn.textContent = '☆';
         btn.setAttribute('aria-label', 'Agregar a favoritos');
         btn.closest('.product-card').classList.remove('is-favorite');
       } else {
         addFavorite(product);
-        btn.textContent = '❤️';
+        btn.textContent = '⭐';
         btn.setAttribute('aria-label', 'Quitar de favoritos');
         btn.closest('.product-card').classList.add('is-favorite');
       }
@@ -925,9 +927,10 @@ function buildProductCardHtml(product) {
   const statusBadges = buildStatusBadges(product);
   const favorited = isFavorite(product.id);
   const favoriteClass = favorited ? ' is-favorite' : '';
-  const favoriteIcon = favorited ? '❤️' : '🤍';
+  const favoriteIcon = favorited ? '⭐' : '☆';
   const favoriteLabel = favorited ? 'Quitar de favoritos' : 'Agregar a favoritos';
   const priceSinceFavoriteHtml = buildPriceSinceFavoriteHtml(product);
+  const publishedDateHtml = buildPublishedDateHtml(product);
 
   return `
     <div class="card h-100 product-card${favoriteClass}"
@@ -947,6 +950,7 @@ function buildProductCardHtml(product) {
         ${priceHtml}
         ${priceSinceFavoriteHtml}
         ${stockHtml}
+        ${publishedDateHtml}
       </div>
       <div class="card-footer text-muted small">
         <a href="${escapeHtml(product.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver en ExtremeTechCR</a>
@@ -974,6 +978,54 @@ function buildPriceSinceFavoriteHtml(product) {
   const addedDate = formatDate(new Date(entry.addedAt));
   const titleText = `Precio cuando lo agregaste: ${CRC_SYMBOL} ${formatNumber(entry.priceAtAddition)} (${addedDate})`;
   return `<div class="favorite-price-change ${colorClass} small mt-1" title="${titleText}">${arrow} ${pct}% desde que lo agregaste</div>`;
+}
+
+/**
+ * Builds the publication date HTML for a product card.
+ * If both the first and latest scraped dates are the same, shows one date with a tooltip
+ * indicating when it was scraped. If they differ (site modified the published date),
+ * shows both so the user can spot the discrepancy; hovering each reveals the scrape time.
+ * @param {Object} product - Product row object with publishedDate* fields.
+ * @returns {string} HTML snippet or empty string when no date is available.
+ */
+function buildPublishedDateHtml(product) {
+  const first = product.publishedDateFirst;
+  const latest = product.publishedDateLatest;
+  if (!first && !latest) return '';
+
+  const fmtDate = (iso) => {
+    if (!iso) return '';
+    // Parse the YYYY-MM-DD date at noon UTC to avoid timezone-boundary issues
+    const d = iso.length === 10 ? new Date(`${iso}T12:00:00Z`) : new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('es-CR', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  const fmtScrapeTime = (iso) => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString('es-CR', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  if (!latest || first === latest) {
+    // Only one date value — show it once
+    const scrapedAt = product.publishedDateFirstScrapedAt
+      ? `Detectado el ${fmtScrapeTime(product.publishedDateFirstScrapedAt)}`
+      : '';
+    return `<div class="product-published-date text-muted small mt-1">
+      <span title="${escapeHtml(scrapedAt)}">📅 Publicado: ${escapeHtml(fmtDate(first || latest))}</span>
+    </div>`;
+  }
+
+  // Dates differ — show both with their respective scrape timestamps
+  const firstTitle = product.publishedDateFirstScrapedAt
+    ? `Fecha original detectada el ${fmtScrapeTime(product.publishedDateFirstScrapedAt)}`
+    : 'Fecha detectada originalmente';
+  const latestTitle = product.publishedDateLatestScrapedAt
+    ? `Fecha actualizada detectada el ${fmtScrapeTime(product.publishedDateLatestScrapedAt)}`
+    : 'Fecha actualizada recientemente';
+  return `<div class="product-published-date text-muted small mt-1">
+    <span title="${escapeHtml(firstTitle)}">📅 Publicado: ${escapeHtml(fmtDate(first))}</span>
+    <span class="ms-1 text-warning" title="${escapeHtml(latestTitle)}">(actualizado: ${escapeHtml(fmtDate(latest))})</span>
+  </div>`;
 }
 
 /**
@@ -1354,7 +1406,7 @@ function setupEventListeners() {
         const favCardBtn = card.querySelector('.favorite-btn');
         const favorited = isFavorite(productId);
         if (favCardBtn) {
-          favCardBtn.textContent = favorited ? '❤️' : '🤍';
+          favCardBtn.textContent = favorited ? '⭐' : '☆';
           favCardBtn.setAttribute('aria-label', favorited ? 'Quitar de favoritos' : 'Agregar a favoritos');
         }
         card.classList.toggle('is-favorite', favorited);
