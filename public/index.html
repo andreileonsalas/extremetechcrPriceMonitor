@@ -28,10 +28,30 @@
       <div class="d-flex align-items-center gap-3">
         <a href="https://andreileonsalas.github.io/unimartMonitor/" class="text-light small text-decoration-none" target="_blank" rel="noopener">UniMart Monitor ↗</a>
         <span id="dbStatus" class="text-light small"></span>
+        <!--
+          FUTURE: Google Sign-In button.
+          Uncomment once Firebase Auth is configured and the JS auth functions
+          in main.js are enabled. The button UI is updated by updateAuthUI().
+          <button id="authBtn" class="btn btn-outline-light btn-sm">🔑 Entrar con Google</button>
+        -->
         <button id="themeToggle" class="btn btn-outline-light btn-sm" aria-label="Cambiar a modo oscuro">🌙</button>
       </div>
     </div>
   </nav>
+
+  <!-- localStorage disclaimer — shown once until dismissed -->
+  <div id="localStorageDisclaimer" class="disclaimer-banner d-none" role="alert">
+    <div class="container d-flex align-items-start gap-2">
+      <span class="disclaimer-icon">⚠️</span>
+      <div class="flex-grow-1">
+        <strong>Tus datos se guardan solo en este navegador.</strong>
+        Los favoritos y preferencias se almacenan en <code>localStorage</code>.
+        Si limpias las cookies / caché del navegador, cambias de navegador o usas el sitio en modo incógnito, <strong>perderás todos tus favoritos</strong>.
+        En el futuro se podrá conectar con una cuenta de Google para sincronizar entre dispositivos.
+      </div>
+      <button id="disclaimerDismiss" class="btn-close btn-close-disclaimer" aria-label="Cerrar aviso"></button>
+    </div>
+  </div>
 
   <main class="container mt-4">
     <div class="row mb-3">
@@ -77,6 +97,9 @@
             <input class="form-check-input" type="checkbox" id="filterOnlyInStock" />
             <label class="form-check-label small" for="filterOnlyInStock">Solo en stock</label>
           </div>
+          <button id="filterFavoritesBtn" type="button"
+                  class="btn btn-sm btn-outline-secondary favorites-filter-btn"
+                  aria-label="Mostrar solo favoritos">⭐ Mis favoritos</button>
         </div>
       </div>
     </div>
@@ -106,6 +129,41 @@
             </div>
             <canvas id="priceChart"></canvas>
             <div id="priceChartEmpty" class="text-center text-muted py-3 d-none">No hay historial de precios para este rango.</div>
+
+            <!--
+              Email notification form — shown/hidden when the notify button is clicked.
+              The button itself is enabled/disabled automatically by updateModalNotifyBtn()
+              based on emailAdapter.isAvailable(). No changes needed here.
+              To enable: swap emailAdapter to OPTION A (EmailJS) or OPTION B (backend) in main.js.
+            -->
+            <div id="notifyEmailForm" class="d-none mt-3 p-3 border rounded notify-email-form">
+              <p class="small mb-2">Ingresa tu correo para recibir una alerta si el precio cambia:</p>
+              <div class="input-group input-group-sm">
+                <input type="email" id="notifyEmailInput" class="form-control"
+                       placeholder="tucorreo@ejemplo.com" autocomplete="email" />
+                <button id="notifyEmailSubmit" type="button" class="btn btn-primary">Notificarme</button>
+              </div>
+              <div id="notifyEmailFeedback" class="small mt-1"></div>
+            </div>
+          </div>
+          <div class="modal-footer modal-actions">
+            <!-- Favourite toggle — wired in JS via updateModalFavoriteBtn() -->
+            <button id="modalFavoriteBtn" type="button"
+                    class="btn btn-sm btn-outline-secondary me-auto">🤍 Agregar a favoritos</button>
+
+            <!--
+              Notify button — enabled/disabled automatically by JS (updateModalNotifyBtn).
+              To enable email sending: swap emailAdapter in main.js (see OPTION A / B there).
+              No changes needed in this HTML file.
+            -->
+            <button id="modalNotifyBtn" type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    disabled
+                    title="Notificaciones por correo no configuradas. Ver emailAdapter en main.js.">
+              🔔 Notificarme por correo
+            </button>
+
+            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cerrar</button>
           </div>
         </div>
       </div>
