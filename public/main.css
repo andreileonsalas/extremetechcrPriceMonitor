@@ -45,6 +45,11 @@ body {
   vertical-align: middle;
 }
 
+.price-change-badge {
+  font-size: 0.7rem;
+  vertical-align: middle;
+}
+
 .stock-locations {
   font-size: 0.72rem;
   color: #6c757d;
@@ -72,4 +77,37 @@ body {
   display: block;
   width: 100% !important;
   height: 56px !important;
+}
+
+/* =========================================================
+   DARK MODE OVERRIDES
+   Bootstrap handles its own components via data-bs-theme="dark".
+   The rules below override our custom elements that use hardcoded colors.
+   ========================================================= */
+
+[data-bs-theme="dark"] body {
+  background-color: #1a1d23;
+}
+
+[data-bs-theme="dark"] .product-img {
+  background: #2b2f38;
+}
+
+[data-bs-theme="dark"] .product-img-placeholder {
+  background: linear-gradient(135deg, #2b2f38 0%, #343a46 100%);
+  color: #adb5bd;
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-bs-theme="dark"] .mini-chart-wrapper {
+  background: #2b2f38;
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-bs-theme="dark"] .product-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+[data-bs-theme="dark"] .stock-locations {
+  color: #9da5b4;
 }

@@ -29,6 +29,7 @@ const SEED_PRODUCTS = [
     sku: 'LP2717',
     category: 'Laptops',
     price: 375000,
+    prevPrice: 420000,
     originalPrice: null,
     stockLocations: JSON.stringify([
       { location: 'Escazú', quantity: 3 },
@@ -58,6 +59,7 @@ const SEED_PRODUCTS = [
     sku: 'MT2736',
     category: 'Monitores',
     price: 34900,
+    prevPrice: 39900,
     originalPrice: null,
     stockLocations: JSON.stringify([
       { location: 'Guapiles', quantity: 1 },
@@ -155,6 +157,7 @@ const SEED_PRODUCTS = [
     sku: 'GPU2201',
     category: 'Tarjetas de Video',
     price: 389900,
+    prevPrice: 359900,
     originalPrice: null,
     stockLocations: JSON.stringify([
       { location: 'Escazú', quantity: 1 },
@@ -250,6 +253,10 @@ function buildDatabase() {
   `);
 
   const now = new Date().toISOString();
+  // Use a week-ago timestamp for previous (closed) price history entries
+  const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const weekAgo = new Date(Date.now() - ONE_WEEK_MS).toISOString();
+
   const insertProduct = db.prepare(`
     INSERT INTO products (url, name, sku, category, description, imageUrl, stockLocations, firstSeenAt, lastCheckedAt, isActive)
     VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, 1)
@@ -258,9 +265,18 @@ function buildDatabase() {
     INSERT INTO priceHistory (productId, price, originalPrice, currency, startDate)
     VALUES (?, ?, ?, 'CRC', ?)
   `);
+  const insertPrevPrice = db.prepare(`
+    INSERT INTO priceHistory (productId, price, originalPrice, currency, startDate, endDate)
+    VALUES (?, ?, ?, 'CRC', ?, ?)
+  `);
 
   for (const p of SEED_PRODUCTS) {
     const result = insertProduct.run(p.url, p.name, p.sku, p.category, p.stockLocations, now, now);
+    // Insert a previous closed price record when the product has a known prior price,
+    // so the discount-sort feature and price-change badges have data to display.
+    if (p.prevPrice != null) {
+      insertPrevPrice.run(result.lastInsertRowid, p.prevPrice, null, weekAgo, now);
+    }
     insertPrice.run(result.lastInsertRowid, p.price, p.originalPrice || null, now);
   }
 

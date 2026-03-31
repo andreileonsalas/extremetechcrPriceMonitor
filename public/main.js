@@ -47,6 +47,16 @@ let filterOnlyInStock = false;
 /** @type {Map<number, import('chart.js').Chart>} Mini sparkline chart instances keyed by product ID */
 const miniChartInstances = new Map();
 
+/**
+ * Number of columns shown per row on medium+ screens.
+ * Stored in localStorage so the preference persists across page loads.
+ * @type {number}
+ */
+let colsPerRow = (() => {
+  const saved = parseInt(localStorage.getItem('colsPerRow') || '3', 10);
+  return saved === 4 ? 4 : 3;
+})();
+
 /* =========================================================
    INITIALIZATION
    ========================================================= */
@@ -57,6 +67,7 @@ const miniChartInstances = new Map();
  */
 async function init() {
   try {
+    initTheme();
     setStatus('Cargando base de datos...');
     const SQL = await initSqlJs({ locateFile: () => SQL_WASM_URL });
     const dbBuffer = await loadDatabaseFromZip();
@@ -90,6 +101,60 @@ async function loadDatabaseFromZip() {
 }
 
 /* =========================================================
+   DARK MODE
+   ========================================================= */
+
+/**
+ * Initialises the theme from localStorage or system preference.
+ * Called once on startup; the inline script in <head> already sets the
+ * data-bs-theme attribute before CSS loads to prevent flash of wrong theme.
+ * This function only updates the toggle button icon to match current state.
+ */
+function initTheme() {
+  updateThemeToggleIcon();
+}
+
+/**
+ * Toggles between light and dark mode, stores the choice in localStorage.
+ */
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-bs-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-bs-theme', next);
+  try { localStorage.setItem('theme', next); } catch (_) {}
+  updateThemeToggleIcon();
+}
+
+/**
+ * Syncs the theme toggle button icon and aria-label with the current theme.
+ */
+function updateThemeToggleIcon() {
+  const btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+  btn.textContent = isDark ? '☀️' : '🌙';
+  btn.setAttribute('aria-label', isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro');
+}
+
+/* =========================================================
+   COLUMNS PER ROW
+   ========================================================= */
+
+/**
+ * Applies the current colsPerRow value to the product grid class and updates
+ * the column selector button active state.
+ */
+function applyColsPerRow() {
+  const grid = document.getElementById('productGrid');
+  if (grid) {
+    grid.className = grid.className.replace(/\brow-cols-md-\d+\b/, `row-cols-md-${colsPerRow}`);
+  }
+  document.querySelectorAll('#colsSelector [data-cols]').forEach((btn) => {
+    btn.classList.toggle('active', parseInt(btn.dataset.cols, 10) === colsPerRow);
+  });
+}
+
+/* =========================================================
    DATABASE QUERIES
    ========================================================= */
 
@@ -99,12 +164,25 @@ async function loadDatabaseFromZip() {
  * are included so the user can find them by toggling the "Ya no en extremetechcr.com" filter.
  * Products inserted by the sitemap crawler but not yet scraped (no price record) are
  * excluded so the UI never shows a wall of "(Producto desconocido)" cards.
+ *
+ * The correlated subquery for prevPrice finds the most recently closed price record
+ * (endDate IS NOT NULL, ordered by endDate DESC). This is the price that was active
+ * immediately before the current open record and is used to show price-change badges
+ * and to enable sorting by biggest price drop or increase.
+ *
  * @returns {Array<Object>} Array of product row objects.
  */
 function queryAllProducts() {
   const result = sqlDb.exec(`
     SELECT p.id, p.url, p.name, p.sku, p.category, p.imageUrl, p.lastCheckedAt,
-           p.stockLocations, p.isActive, ph.price, ph.originalPrice, ph.currency
+           p.stockLocations, p.isActive, ph.price, ph.originalPrice, ph.currency,
+           (
+             SELECT ph2.price
+             FROM priceHistory ph2
+             WHERE ph2.productId = p.id AND ph2.endDate IS NOT NULL
+             ORDER BY ph2.endDate DESC
+             LIMIT 1
+           ) AS prevPrice
     FROM products p
     INNER JOIN priceHistory ph ON ph.productId = p.id AND ph.endDate IS NULL
     ORDER BY p.isActive DESC, p.name ASC
@@ -195,6 +273,18 @@ function isProductInStock(stockLocationsJson) {
 }
 
 /**
+ * Computes the price change percentage vs the most recent previous price on record.
+ * A negative value indicates the price dropped; a positive value indicates it rose.
+ * Returns 0 when no previous price is available (first-time price or never changed).
+ * @param {Object} product - Product row with price and prevPrice fields.
+ * @returns {number} Percentage change (e.g. -12.5 for a 12.5% drop).
+ */
+function calcPriceChangePct(product) {
+  if (product.prevPrice == null || product.prevPrice === 0) return 0;
+  return (product.price - product.prevPrice) / product.prevPrice * 100;
+}
+
+/**
  * Applies the current filter state (active/inactive, in-stock/out-of-stock, search term)
  * and returns the matching subset of allProducts.
  * @param {Array<Object>} products - Full product list to filter.
@@ -241,7 +331,8 @@ function filterAndSort() {
 /**
  * Sorts an array of product objects by the given sort key.
  * @param {Array<Object>} products - Products to sort.
- * @param {string} sortKey - One of "name-asc", "name-desc", "price-asc", "price-desc".
+ * @param {string} sortKey - One of "name-asc", "name-desc", "price-asc", "price-desc",
+ *   "discount-desc" (biggest price drop first), or "increase-desc" (biggest rise first).
  * @returns {Array<Object>} Sorted array (new array, original unchanged).
  */
 function sortProducts(products, sortKey) {
@@ -256,6 +347,12 @@ function sortProducts(products, sortKey) {
         return (a.price ?? Infinity) - (b.price ?? Infinity);
       case 'price-desc':
         return (b.price ?? -Infinity) - (a.price ?? -Infinity);
+      case 'discount-desc':
+        // Products with the biggest price DROP first (most negative change %)
+        return calcPriceChangePct(a) - calcPriceChangePct(b);
+      case 'increase-desc':
+        // Products with the biggest price RISE first (most positive change %)
+        return calcPriceChangePct(b) - calcPriceChangePct(a);
       default:
         return 0;
     }
@@ -289,6 +386,9 @@ function renderProducts(products) {
     col.innerHTML = buildProductCardHtml(product);
     grid.appendChild(col);
   });
+
+  // Apply stored columns-per-row preference after building the grid
+  applyColsPerRow();
 
   // Attach price history click handlers
   grid.querySelectorAll('.product-card').forEach((card) => {
@@ -363,7 +463,8 @@ function buildStatusBadges(product) {
 /**
  * Builds the price section HTML for a product card.
  * Shows original (struck-through) price and a discount badge when on sale.
- * @param {Object} product - Product row object with price, originalPrice fields.
+ * Shows a price-change badge (↓/↑ X%) when a previous price record is available.
+ * @param {Object} product - Product row object with price, originalPrice, prevPrice fields.
  * @returns {string} HTML snippet for the price display.
  */
 function buildPriceHtml(product) {
@@ -371,6 +472,7 @@ function buildPriceHtml(product) {
     return '<span class="text-muted small">Precio no disponible</span>';
   }
   const activePrice = `${CRC_SYMBOL} ${formatNumber(product.price)}`;
+  const changeHtml = buildPriceChangeBadge(product);
 
   if (product.originalPrice != null && product.originalPrice > product.price) {
     const origPrice = `${CRC_SYMBOL} ${formatNumber(product.originalPrice)}`;
@@ -382,11 +484,32 @@ function buildPriceHtml(product) {
         <span class="text-muted text-decoration-line-through small">${origPrice}</span>
         <span class="badge bg-danger ms-1 discount-badge">-${discountPct}%</span>
         <br/>
-        <span class="badge bg-success price-badge">${activePrice}</span>
+        <span class="badge bg-success price-badge">${activePrice}</span>${changeHtml}
       </div>`;
   }
 
-  return `<span class="badge bg-success price-badge">${activePrice}</span>`;
+  return `<div class="price-block"><span class="badge bg-success price-badge">${activePrice}</span>${changeHtml}</div>`;
+}
+
+/**
+ * Builds a small price-change indicator badge comparing current price to the previous
+ * price on record (prevPrice). Shows a green down-arrow badge for price drops and a
+ * red up-arrow badge for price increases. Returns an empty string when there is no
+ * previous price or the change rounds to 0%.
+ * The change percentage is rounded to the nearest whole number for display; sub-1%
+ * changes are suppressed (shown as 0 and therefore hidden) to avoid cluttering cards
+ * with trivial fluctuations.
+ * @param {Object} product - Product row object with price and prevPrice fields.
+ * @returns {string} HTML badge or empty string.
+ */
+function buildPriceChangeBadge(product) {
+  if (product.prevPrice == null || product.price == null) return '';
+  const pct = Math.round(Math.abs(calcPriceChangePct(product)));
+  if (pct === 0) return '';
+  if (product.price < product.prevPrice) {
+    return `<span class="badge bg-success-subtle text-success ms-1 price-change-badge">↓ ${pct}%</span>`;
+  }
+  return `<span class="badge bg-danger-subtle text-danger ms-1 price-change-badge">↑ ${pct}%</span>`;
 }
 
 /**
@@ -634,6 +757,19 @@ function setupEventListeners() {
       selectedChartDays = parseInt(btn.dataset.days, 10);
       const productId = parseInt(document.getElementById('priceModal').dataset.productId, 10);
       renderPriceChart(productId, selectedChartDays);
+    });
+  });
+
+  const themeBtn = document.getElementById('themeToggle');
+  if (themeBtn) {
+    themeBtn.addEventListener('click', toggleTheme);
+  }
+
+  document.querySelectorAll('#colsSelector [data-cols]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      colsPerRow = parseInt(btn.dataset.cols, 10);
+      try { localStorage.setItem('colsPerRow', String(colsPerRow)); } catch (_) {}
+      applyColsPerRow();
     });
   });
 }
