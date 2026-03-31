@@ -8,6 +8,7 @@ const {
   extractPrice,
   extractDiscountPercentage,
   extractStockLocations,
+  parseStoreStatusQuantity,
   parseStockQuantity,
   parseStockLocationText,
   scrapeProductFromHtml,
@@ -184,6 +185,92 @@ const HTML_WOODMART_SALE = `
             </span>
           </ins>
         </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+/* =========================================================
+   HTML FIXTURES — custom store-item structure (real extremetechcr.com Woodmart theme)
+   Stock availability shown via .store-list > .store-item elements.
+   Status classes: status-limited (N units), status-available (Disponible), status-out (No disponible).
+   ========================================================= */
+
+/**
+ * Minimal product page with mix of store availability states:
+ * San Pedro: Quedan 2 (limited), Cartago: Queda 1 (limited), Escazu: No disponible (out),
+ * Bodega Central: Disponible (available).
+ */
+const HTML_STORE_ITEM_MIXED = `
+<!DOCTYPE html>
+<html>
+<body class="single-product woocommerce woocommerce-page">
+  <div class="product" itemscope itemtype="https://schema.org/Product">
+    <h1 class="product_title entry-title">Test Product Mixed Stock</h1>
+    <div class="wd-single-price">
+      <p class="price">
+        <span class="woocommerce-Price-amount amount">
+          <bdi><span class="woocommerce-Price-currencySymbol">&#8353;</span>500,000</bdi>
+        </span>
+      </p>
+    </div>
+    <p class="stock out-of-stock wd-style-default">Sin existencias</p>
+    <div class="store-list">
+      <div class="store-item gam-location-item">
+        <div class="store-info"><span class="store-name">San Pedro</span></div>
+        <div class="status status-limited"><span class="status-text">Quedan 2</span></div>
+      </div>
+      <div class="store-item gam-location-item">
+        <div class="store-info"><span class="store-name">Cartago</span></div>
+        <div class="status status-limited"><span class="status-text">Queda 1</span></div>
+      </div>
+      <div class="store-item gam-location-item">
+        <div class="store-info"><span class="store-name">Escazu</span></div>
+        <div class="status status-out"><span class="status-text">No disponible</span></div>
+      </div>
+    </div>
+    <div class="store-list">
+      <div class="store-item central-warehouse-item">
+        <div class="store-info"><span class="store-name">Bodega Central</span></div>
+        <div class="status status-available"><span class="status-text">Disponible</span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+/**
+ * Minimal product page where ALL stores show "No disponible" (truly out of stock).
+ */
+const HTML_STORE_ITEM_ALL_OUT = `
+<!DOCTYPE html>
+<html>
+<body class="single-product woocommerce woocommerce-page">
+  <div class="product" itemscope itemtype="https://schema.org/Product">
+    <h1 class="product_title entry-title">Test Product No Stock</h1>
+    <div class="wd-single-price">
+      <p class="price">
+        <span class="woocommerce-Price-amount amount">
+          <bdi><span class="woocommerce-Price-currencySymbol">&#8353;</span>250,000</bdi>
+        </span>
+      </p>
+    </div>
+    <p class="stock out-of-stock wd-style-default">Sin existencias</p>
+    <div class="store-list">
+      <div class="store-item gam-location-item">
+        <div class="store-info"><span class="store-name">Alajuela</span></div>
+        <div class="status status-out"><span class="status-text">No disponible</span></div>
+      </div>
+      <div class="store-item gam-location-item">
+        <div class="store-info"><span class="store-name">San Pedro</span></div>
+        <div class="status status-out"><span class="status-text">No disponible</span></div>
+      </div>
+    </div>
+    <div class="store-list">
+      <div class="store-item central-warehouse-item">
+        <div class="store-info"><span class="store-name">Bodega Central</span></div>
+        <div class="status status-out"><span class="status-text">No disponible</span></div>
       </div>
     </div>
   </div>
@@ -379,7 +466,7 @@ describe('productScraper', () => {
   });
 
   describe('extractStockLocations', () => {
-    test('extracts stock from wc-stock-locations table', () => {
+    test('extracts stock from wc-stock-locations table (legacy fallback)', () => {
       const $ = load(`<div class="wc-stock-locations">
         <table>
           <tr><td>Alajuela</td><td>1 en stock</td></tr>
@@ -392,9 +479,60 @@ describe('productScraper', () => {
       expect(locations[1]).toEqual({ location: 'Bodega Central', quantity: 2 });
     });
 
+    test('extracts stock from .store-item structure (primary path for extremetechcr.com)', () => {
+      const $ = load(HTML_STORE_ITEM_MIXED);
+      const locations = extractStockLocations($);
+      expect(locations.length).toBe(4);
+      expect(locations.find((l) => l.location === 'San Pedro')).toEqual({ location: 'San Pedro', quantity: 2 });
+      expect(locations.find((l) => l.location === 'Cartago')).toEqual({ location: 'Cartago', quantity: 1 });
+      expect(locations.find((l) => l.location === 'Escazu')).toEqual({ location: 'Escazu', quantity: 0 });
+      expect(locations.find((l) => l.location === 'Bodega Central')).toEqual({ location: 'Bodega Central', quantity: 1 });
+    });
+
+    test('store-item structure: isAvailable true when at least one store has stock', () => {
+      const result = scrapeProductFromHtml('https://example.com/producto/x/', HTML_STORE_ITEM_MIXED);
+      expect(result.isAvailable).toBe(true);
+    });
+
+    test('store-item structure: isAvailable false when all stores are out of stock', () => {
+      const result = scrapeProductFromHtml('https://example.com/producto/x/', HTML_STORE_ITEM_ALL_OUT);
+      expect(result.isAvailable).toBe(false);
+      expect(result.stockLocations.every((l) => l.quantity === 0)).toBe(true);
+    });
+
     test('returns empty array when no stock location container is found', () => {
       const $ = load('<div class="product"></div>');
       expect(extractStockLocations($)).toEqual([]);
+    });
+  });
+
+  describe('parseStoreStatusQuantity', () => {
+    test('status-out returns 0 (No disponible)', () => {
+      expect(parseStoreStatusQuantity('status status-out', 'No disponible')).toBe(0);
+    });
+
+    test('status-available returns 1 (Disponible)', () => {
+      expect(parseStoreStatusQuantity('status status-available', 'Disponible')).toBe(1);
+    });
+
+    test('status-limited parses "Queda 1" as 1', () => {
+      expect(parseStoreStatusQuantity('status status-limited', 'Queda 1')).toBe(1);
+    });
+
+    test('status-limited parses "Quedan 2" as 2', () => {
+      expect(parseStoreStatusQuantity('status status-limited', 'Quedan 2')).toBe(2);
+    });
+
+    test('status-limited with no digit falls back to 1', () => {
+      expect(parseStoreStatusQuantity('status status-limited', 'Disponible')).toBe(1);
+    });
+
+    test('unknown status class with digit falls back to parsed number', () => {
+      expect(parseStoreStatusQuantity('status status-unknown', '3 unidades')).toBe(3);
+    });
+
+    test('unknown status class with no digit returns null', () => {
+      expect(parseStoreStatusQuantity('status status-unknown', 'Desconocido')).toBeNull();
     });
   });
 

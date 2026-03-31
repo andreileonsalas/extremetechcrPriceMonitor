@@ -89,16 +89,30 @@ Currency: ₡ / \u20a1 = CRC, $ = USD, € = EUR
 ## KNOWN SITE STRUCTURE (WooCommerce + Woodmart/Elementor theme)
 ```
 Title:     h1.product_title, h1.entry-title
-Price:     .wd-single-price .price .woocommerce-Price-amount   ← Woodmart/Elementor (this site)
-           .summary .price .woocommerce-Price-amount           ← standard WooCommerce (fallback)
+Price:     .wd-single-price .price .woocommerce-Price-amount   <- Woodmart/Elementor (this site)
+           .summary .price .woocommerce-Price-amount           <- standard WooCommerce (fallback)
 Sale:      .wd-single-price .price ins .woocommerce-Price-amount
 Original:  .wd-single-price .price del .woocommerce-Price-amount
 SKU:       .sku
 Category:  .posted_in a
 Image:     .woocommerce-product-gallery__image img
-Stock:     .wc-stock-locations table tr → td[0]=location, td[1]="N en stock"
-Available: button.single_add_to_cart_button exists + no .out-of-stock
 IsProduct: body.single-product OR body.woocommerce-page OR [itemtype*="schema.org/Product"]
+
+Stock (primary): .store-list > .store-item structure (custom Woodmart plugin)
+  Each .store-item contains:
+    .store-name span -> location name (e.g. "San Pedro", "Bodega Central")
+    .status div      -> class determines availability:
+                        status-out       = 0 units ("No disponible")
+                        status-available = 1+ units ("Disponible")
+                        status-limited   = N units from .status-text ("Queda 1", "Quedan 2")
+    .status-text span -> human-readable status text
+
+Stock (fallback): .wc-stock-locations table tr -> td[0]=location, td[1]="N en stock"
+
+IMPORTANT: The .stock.out-of-stock element next to the price ("Sin existencias") is set by
+WooCommerce's global stock status and is UNRELIABLE. A product can show "Sin existencias" next
+to the price while individual stores still have units. Always use the .store-item data.
+Available: button.single_add_to_cart_button exists + no .out-of-stock (FALLBACK only, unreliable)
 ```
 
 **NOTE:** The site does NOT use .summary/.entry-summary for the price block.
