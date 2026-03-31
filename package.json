@@ -10,6 +10,7 @@
     "prepare-chunks": "node src/jobs/prepareWorkerChunks.js",
     "merge-workers": "node src/jobs/mergeWorkerDbs.js",
     "seed": "node scripts/seedDatabase.js",
+    "price-alerts": "node src/jobs/sendPriceAlerts.js",
     "test": "jest",
     "test:unit": "jest tests/unit",
     "test:e2e": "playwright test",
@@ -25,7 +26,9 @@
     "bootstrap": "^5.3.8",
     "chart.js": "^4.5.1",
     "cheerio": "^1.0.0",
+    "firebase-admin": "^13.7.0",
     "jszip": "^3.10.1",
+    "nodemailer": "^8.0.4",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "sql.js": "^1.14.1"

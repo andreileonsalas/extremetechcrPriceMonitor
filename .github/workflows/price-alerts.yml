@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# price-alerts.yml — Firebase Price Alert Email Notifications
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Runs automatically 30 minutes after the daily price crawl completes,
+# giving the crawl time to finish and commit the updated db.zip.
+#
+# What it does:
+#   1. Checks out the repo (including the latest db.zip with fresh prices).
+#   2. Reads active price alerts from Firestore (priceAlerts collection).
+#   3. For each alert where the condition is met, sends an HTML email via SMTP.
+#   4. Updates the Firestore alert document (lastTriggeredAt, priceAtCreation reset).
+#
+# REQUIRED GITHUB SECRETS:
+#   FIREBASE_SERVICE_ACCOUNT_JSON
+#     Full JSON contents of a Firebase service account key file.
+#     Generate at: Firebase Console → Project Settings → Service accounts → Generate new private key
+#
+#   SMTP_HOST        — SMTP server hostname (e.g., smtp.gmail.com or smtp.sendgrid.net)
+#   SMTP_PORT        — SMTP port number (587 for STARTTLS or 465 for SSL). Default: 587
+#   SMTP_USER        — SMTP username (usually your email or "apikey" for SendGrid)
+#   SMTP_PASS        — SMTP password or API key
+#   SMTP_FROM        — (optional) "From" address, e.g. "ExtremeTechCR <no-reply@yourdomain.com>"
+#
+# OPTIONAL GITHUB VARS (Settings → Secrets and variables → Variables):
+#   SITE_URL  — Base URL of the price monitor site (used in email links)
+#               Default: https://andreileonsalas.github.io/extremetechcrPriceMonitor/public/
+#
+# HOW TO DISABLE:
+#   Remove the schedule trigger below. The workflow can still be run manually.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Price Alert Emails
+
+on:
+  # Runs 30 minutes after the daily price crawl (daily at 3am UTC → this at 3:30am UTC)
+  schedule:
+    - cron: '30 3 * * *'
+
+  # Allow manual runs from the Actions tab (useful for testing)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — check alerts but do NOT send emails (set to "true" to enable)'
+        required: false
+        default: 'false'
+
+jobs:
+  send-alerts:
+    name: Send Price Alert Emails
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Only run when the required secrets are configured
+    # (prevents spurious failures on forks / branches without secrets)
+    if: |
+      github.repository_owner != '' &&
+      vars.SKIP_PRICE_ALERTS != 'true'
+
+    steps:
+      - name: Checkout repository (with latest db.zip)
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run price alert email job
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          SMTP_HOST:   ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:   ${{ secrets.SMTP_PORT }}
+          SMTP_USER:   ${{ secrets.SMTP_USER }}
+          SMTP_PASS:   ${{ secrets.SMTP_PASS }}
+          SMTP_FROM:   ${{ secrets.SMTP_FROM }}
+          SITE_URL:    ${{ vars.SITE_URL }}
+          # Set to 'true' to test the alert detection logic without actually sending emails
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: node src/jobs/sendPriceAlerts.js

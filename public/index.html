@@ -20,6 +20,17 @@
   <title>ExtremeTechCR Price Monitor</title>
   <link rel="stylesheet" href="vendor/bootstrap.min.css" />
   <link rel="stylesheet" href="main.css" />
+  <!--
+    Firebase Web SDK (compat v10) — loaded only when firebase-config.js has real values.
+    These scripts are always included so firebase-config.js can initialize them safely.
+    If Firebase is not configured the scripts are still loaded (~50 KB gzipped) but dormant.
+    CDN integrity hashes are intentionally omitted here; Firebase CDN URLs are immutable by version.
+  -->
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <!-- Firebase project config + initialization (fill in values before deploying) -->
+  <script src="firebase-config.js"></script>
 </head>
 <body>
   <nav class="navbar navbar-dark bg-dark">
@@ -28,26 +39,27 @@
       <div class="d-flex align-items-center gap-3">
         <a href="https://andreileonsalas.github.io/unimartMonitor/" class="text-light small text-decoration-none" target="_blank" rel="noopener">UniMart Monitor ↗</a>
         <span id="dbStatus" class="text-light small"></span>
-        <!--
-          FUTURE: Google Sign-In button.
-          Uncomment once Firebase Auth is configured and the JS auth functions
-          in main.js are enabled. The button UI is updated by updateAuthUI().
-          <button id="authBtn" class="btn btn-outline-light btn-sm">🔑 Entrar con Google</button>
-        -->
+        <!-- Auth button — shown when Firebase is configured; hidden otherwise (JS toggles visibility) -->
+        <button id="authBtn" class="btn btn-outline-light btn-sm d-none"
+                aria-label="Iniciar sesión">🔑 Iniciar sesión</button>
         <button id="themeToggle" class="btn btn-outline-light btn-sm" aria-label="Cambiar a modo oscuro">🌙</button>
       </div>
     </div>
   </nav>
 
-  <!-- localStorage disclaimer — shown once until dismissed -->
+  <!-- localStorage / Firebase sync disclaimer — shown once until dismissed -->
   <div id="localStorageDisclaimer" class="disclaimer-banner d-none" role="alert">
     <div class="container d-flex align-items-start gap-2">
       <span class="disclaimer-icon">⚠️</span>
       <div class="flex-grow-1">
-        <strong>Tus datos se guardan solo en este navegador.</strong>
-        Los favoritos y preferencias se almacenan en <code>localStorage</code>.
-        Si limpias las cookies / caché del navegador, cambias de navegador o usas el sitio en modo incógnito, <strong>perderás todos tus favoritos</strong>.
-        En el futuro se podrá conectar con una cuenta de Google para sincronizar entre dispositivos.
+        <strong id="disclaimerTitle">Tus datos se guardan solo en este navegador.</strong>
+        <span id="disclaimerBody">
+          Los favoritos y alertas de precio se almacenan en <code>localStorage</code>.
+          Si limpias las cookies / caché del navegador o usas otro dispositivo, <strong>perderás tus datos</strong>.
+          <span id="disclaimerFirebaseHint" class="d-none">
+            Inicia sesión para sincronizar tus datos en la nube con Firebase. 🔑
+          </span>
+        </span>
       </div>
       <button id="disclaimerDismiss" class="btn-close btn-close-disclaimer" aria-label="Cerrar aviso"></button>
     </div>
@@ -74,6 +86,11 @@
         </select>
       </div>
       <div class="col-md-3 d-flex align-items-center justify-content-end gap-2">
+        <!-- Category filter -->
+        <select id="categorySelect" class="form-select form-select-sm" style="max-width:160px;"
+                title="Filtrar por categoría" aria-label="Filtrar por categoría">
+          <option value="">Todas las categorías</option>
+        </select>
         <div class="btn-group btn-group-sm d-none d-md-inline-flex" role="group"
              aria-label="Columnas por fila" id="colsSelector">
           <button type="button" class="btn btn-outline-secondary active"
@@ -100,6 +117,41 @@
           <button id="filterFavoritesBtn" type="button"
                   class="btn btn-sm btn-outline-secondary favorites-filter-btn"
                   aria-label="Mostrar solo favoritos">⭐ Mis favoritos</button>
+          <button id="filterNewThisWeekBtn" type="button"
+                  class="btn btn-sm btn-outline-secondary new-week-filter-btn"
+                  aria-label="Mostrar solo productos nuevos esta semana">🆕 Nuevos esta semana</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Price range filter row -->
+    <div class="row mb-3">
+      <div class="col">
+        <div class="d-flex flex-wrap gap-3 align-items-center">
+          <small class="text-muted fw-semibold">Rango de precio:</small>
+          <div class="input-group input-group-sm" style="max-width:200px;">
+            <span class="input-group-text">₡ min</span>
+            <input type="number" id="priceMinInput" class="form-control" min="0" step="1000"
+                   placeholder="0" aria-label="Precio mínimo" />
+          </div>
+          <div class="input-group input-group-sm" style="max-width:200px;">
+            <span class="input-group-text">₡ max</span>
+            <input type="number" id="priceMaxInput" class="form-control" min="0" step="1000"
+                   placeholder="sin límite" aria-label="Precio máximo" />
+          </div>
+          <button id="clearPriceRangeBtn" type="button"
+                  class="btn btn-sm btn-outline-secondary d-none"
+                  aria-label="Limpiar filtro de precio">✕ Limpiar</button>
+          <!-- Share favorites button -->
+          <button id="shareFavoritesBtn" type="button"
+                  class="btn btn-sm btn-outline-secondary ms-auto"
+                  title="Generar un enlace compartible con tus favoritos"
+                  aria-label="Compartir favoritos">📤 Compartir favoritos</button>
+          <!-- Manage alerts button — shown only when Firebase is configured -->
+          <button id="manageAlertsBtn" type="button"
+                  class="btn btn-sm btn-outline-warning d-none"
+                  title="Ver y gestionar tus alertas de precio"
+                  aria-label="Gestionar alertas">🔔 Mis alertas</button>
         </div>
       </div>
     </div>
@@ -131,19 +183,38 @@
             <div id="priceChartEmpty" class="text-center text-muted py-3 d-none">No hay historial de precios para este rango.</div>
 
             <!--
-              Email notification form — shown/hidden when the notify button is clicked.
-              The button itself is enabled/disabled automatically by updateModalNotifyBtn()
-              based on emailAdapter.isAvailable(). No changes needed here.
-              To enable: swap emailAdapter to OPTION A (EmailJS) or OPTION B (backend) in main.js.
+              Email / Firebase price alert form — shown/hidden when the notify button is clicked.
+              When Firebase is configured, this registers a price alert in Firestore.
+              The GitHub Action (price-alerts.yml) reads Firestore and sends the email.
+              When Firebase is NOT configured, the button stays disabled.
             -->
             <div id="notifyEmailForm" class="d-none mt-3 p-3 border rounded notify-email-form">
-              <p class="small mb-2">Ingresa tu correo para recibir una alerta si el precio cambia:</p>
-              <div class="input-group input-group-sm">
-                <input type="email" id="notifyEmailInput" class="form-control"
-                       placeholder="tucorreo@ejemplo.com" autocomplete="email" />
-                <button id="notifyEmailSubmit" type="button" class="btn btn-primary">Notificarme</button>
+              <p class="small mb-2 fw-semibold">🔔 Crear alerta de precio</p>
+              <p class="small mb-2 text-muted">Ingresa tu correo y opcionalmente un precio objetivo. Te notificaremos cuando baje.</p>
+              <div class="mb-2">
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text">📧</span>
+                  <input type="email" id="notifyEmailInput" class="form-control"
+                         placeholder="tucorreo@ejemplo.com" autocomplete="email" />
+                </div>
               </div>
+              <div class="mb-2">
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text">₡ objetivo</span>
+                  <input type="number" id="notifyTargetPriceInput" class="form-control"
+                         min="0" step="1000" placeholder="dejar vacío = cualquier bajada" />
+                </div>
+                <div class="form-text small text-muted">Deja vacío para recibir alerta ante cualquier bajada de precio.</div>
+              </div>
+              <button id="notifyEmailSubmit" type="button" class="btn btn-primary btn-sm">💾 Guardar alerta</button>
               <div id="notifyEmailFeedback" class="small mt-1"></div>
+              <!-- Existing alert info (shown when an alert already exists for this product) -->
+              <div id="existingAlertInfo" class="d-none mt-2 p-2 rounded existing-alert-info">
+                <div class="d-flex align-items-center justify-content-between">
+                  <span id="existingAlertText" class="small"></span>
+                  <button id="deleteAlertBtn" type="button" class="btn btn-sm btn-outline-danger ms-2">🗑️ Eliminar</button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="modal-footer modal-actions">
@@ -169,6 +240,119 @@
       </div>
     </div>
   </main>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       PRICE ALERTS MANAGEMENT MODAL
+       Lists active Firestore price alerts for the current user.
+       Shown when Firebase is configured and user clicks "🔔 Mis alertas".
+  ════════════════════════════════════════════════════════════════════════ -->
+  <div class="modal fade" id="alertsModal" tabindex="-1" aria-labelledby="alertsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="alertsModalLabel">🔔 Mis alertas de precio</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            Recibirás un correo cuando el precio baje hasta tu objetivo (o ante cualquier bajada si no especificaste precio objetivo).
+            Las alertas se procesan automáticamente por el sistema cada día después del rastreo de precios.
+          </p>
+          <div id="alertsLoadingSpinner" class="text-center py-3">
+            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+            <span class="ms-2 text-muted small">Cargando alertas...</span>
+          </div>
+          <div id="alertsEmptyState" class="d-none text-center py-4 text-muted">
+            <p class="mb-0">No tienes alertas activas. Abre el historial de precios de un producto y haz clic en "🔔 Notificarme por correo".</p>
+          </div>
+          <div id="alertsList" class="d-none">
+            <table class="table table-sm table-hover align-middle">
+              <thead>
+                <tr>
+                  <th class="small text-muted fw-normal">Producto</th>
+                  <th class="small text-muted fw-normal">Precio al agregar</th>
+                  <th class="small text-muted fw-normal">Precio objetivo</th>
+                  <th class="small text-muted fw-normal">Correo</th>
+                  <th class="small text-muted fw-normal">Última alerta</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="alertsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       SHARE FAVORITES MODAL
+       Generates a shareable URL with encoded favorite product IDs.
+  ════════════════════════════════════════════════════════════════════════ -->
+  <div class="modal fade" id="shareModal" tabindex="-1" aria-labelledby="shareModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="shareModalLabel">📤 Compartir favoritos</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            Comparte este enlace para que alguien más pueda ver e importar tus productos favoritos.
+          </p>
+          <div id="shareEmptyState" class="d-none text-center py-3 text-muted">
+            <p class="mb-0">No tienes favoritos guardados aún.</p>
+          </div>
+          <div id="shareUrlSection" class="d-none">
+            <label for="shareUrlInput" class="form-label small fw-semibold">Enlace para compartir:</label>
+            <div class="input-group input-group-sm mb-2">
+              <input type="text" id="shareUrlInput" class="form-control font-monospace small"
+                     readonly aria-label="URL para compartir favoritos" />
+              <button id="copyShareUrlBtn" type="button" class="btn btn-outline-secondary">📋 Copiar</button>
+            </div>
+            <p id="copyShareUrlFeedback" class="small text-success d-none">✓ Enlace copiado al portapapeles.</p>
+            <p class="small text-muted mt-2 mb-0">
+              <strong>Nota:</strong> El enlace incluye los IDs de tus favoritos. Quien lo abra verá una
+              opción para importarlos. Los precios y nombres se obtienen de la base de datos actualizada.
+            </p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       IMPORT FAVORITES MODAL
+       Shown when the page is opened with a ?share= query parameter.
+  ════════════════════════════════════════════════════════════════════════ -->
+  <div class="modal fade" id="importFavoritesModal" tabindex="-1" aria-labelledby="importFavoritesModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="importFavoritesModalLabel">📥 Importar favoritos compartidos</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-2">
+            Alguien compartió una lista de favoritos contigo.
+            ¿Deseas agregarlos a tus propios favoritos?
+          </p>
+          <div id="importFavoritesCount" class="fw-semibold mb-2"></div>
+          <p class="small text-muted mb-0">Los productos que ya tengas en favoritos no serán duplicados.</p>
+        </div>
+        <div class="modal-footer">
+          <button id="importFavoritesConfirm" type="button" class="btn btn-primary btn-sm">✅ Importar</button>
+          <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="vendor/bootstrap.bundle.min.js"></script>
   <script src="vendor/chart.umd.js"></script>
