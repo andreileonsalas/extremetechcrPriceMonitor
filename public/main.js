@@ -29,127 +29,264 @@ const APP_DATA_KEY = 'priceMonitorAppData';
 const DISCLAIMER_KEY = 'priceMonitorDisclaimerDismissed';
 
 /* =========================================================
-   STORAGE ADAPTER
-   All user-generated data (favourites, notification prefs, etc.) flows
-   through this adapter so swapping to a real backend only requires
-   replacing the object below — no other code changes needed.
+   ADAPTERS
+   ─────────────────────────────────────────────────────────
+   There are two adapters in this file:
+     storageAdapter  — saves/loads user data (favourites, preferences)
+     emailAdapter    — sends price-alert notification emails
 
-   The interface is synchronous (localStorage). When connecting to an
-   async backend (Firebase, REST API…) make the callers await the results.
+   HOW THE PATTERN WORKS
+   ─────────────────────
+   Each adapter is a plain object with a fixed set of methods.
+   The rest of this file only calls those method names and never
+   knows (or cares) which real service is behind them.
+
+   To connect a real service you only need to do THREE things:
+     1. Find the adapter you want to replace (storageAdapter or emailAdapter).
+     2. Uncomment the "OPTION A / B" block for the service you chose.
+     3. Change the ONE line that reads
+            const storageAdapter = { … active stub … };
+        to
+            const storageAdapter = firebaseStorageAdapter;   ← or whichever name
+        (same for emailAdapter).
+   Nothing else in this file needs to change.
+
+   NOTE ON async: The active stubs below are synchronous (localStorage).
+   Firebase, REST endpoints, and EmailJS are all async. If you switch,
+   add async/await to loadAppData, saveAppData, and their callers, or
+   wrap the calls in .then() chains.
    ========================================================= */
 
-// ── Active implementation: localStorage ──────────────────
+/* ─────────────────────────────────────────────────────────
+   ADAPTER 1 — STORAGE
+   Saves and loads all user-generated data (favourites, prefs).
+
+   Required methods:
+     get(key)         → any | null
+     set(key, value)  → void
+     remove(key)      → void
+   ───────────────────────────────────────────────────────── */
+
+// ── ACTIVE: localStorage (no signup, data lives in this browser only) ─────────
 const storageAdapter = {
-  /** @param {string} key @returns {any|null} */
   get(key) {
     try { return JSON.parse(localStorage.getItem(key)); } catch (err) {
       console.warn('[storageAdapter] Failed to parse value for key', key, err);
       return null;
     }
   },
-  /** @param {string} key @param {any} value */
   set(key, value) {
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) {
       console.warn('[storageAdapter] Failed to set value for key', key, err);
     }
   },
-  /** @param {string} key */
   remove(key) {
     try { localStorage.removeItem(key); } catch (_) {}
   },
 };
 
 /*
-// ── FUTURE: Firebase / Firestore adapter ─────────────────
-// 1. Add Firebase SDK scripts to index.html.
-// 2. Replace `storageAdapter` above with `firebaseAdapter`.
-// 3. The APP_DATA_KEY becomes the Firestore document field name.
+// ── OPTION A: Firebase / Firestore ────────────────────────────────────────────
+// HOW TO SWITCH:
+//   1. Go to https://console.firebase.google.com → create a project → add a web app.
+//   2. Enable Firestore Database in the Firebase console.
+//   3. In index.html, add these three scripts BEFORE main.js:
+//        <script src="https://www.gstatic.com/firebasejs/10.x.x/firebase-app-compat.js"></script>
+//        <script src="https://www.gstatic.com/firebasejs/10.x.x/firebase-firestore-compat.js"></script>
+//        <script src="https://www.gstatic.com/firebasejs/10.x.x/firebase-auth-compat.js"></script>
+//   4. Fill in the YOUR_* values below.
+//   5. Change the active line above to:   const storageAdapter = firebaseStorageAdapter;
+//   6. Also uncomment the GOOGLE AUTH block at the bottom of this section.
 //
-// import { doc, getDoc, setDoc, updateDoc, deleteField } from 'firebase/firestore';
+// const firebaseApp = firebase.initializeApp({
+//   apiKey:            'YOUR_API_KEY',
+//   authDomain:        'YOUR_PROJECT.firebaseapp.com',
+//   projectId:         'YOUR_PROJECT_ID',
+//   storageBucket:     'YOUR_PROJECT.appspot.com',
+//   messagingSenderId: 'YOUR_SENDER_ID',
+//   appId:             'YOUR_APP_ID',
+// });
+// const firestoreDb = firebase.firestore();
 //
-// const firebaseAdapter = {
+// const firebaseStorageAdapter = {
 //   async get(key) {
-//     const snap = await getDoc(doc(db, 'users', currentUser.uid));
-//     return snap.exists() ? (snap.data()[key] ?? null) : null;
+//     if (!currentUser) return null;
+//     const snap = await firestoreDb.collection('users').doc(currentUser.uid).get();
+//     return snap.exists ? (snap.data()[key] ?? null) : null;
 //   },
 //   async set(key, value) {
-//     await setDoc(doc(db, 'users', currentUser.uid), { [key]: value }, { merge: true });
+//     if (!currentUser) return;
+//     await firestoreDb.collection('users').doc(currentUser.uid).set({ [key]: value }, { merge: true });
 //   },
 //   async remove(key) {
-//     await updateDoc(doc(db, 'users', currentUser.uid), { [key]: deleteField() });
+//     if (!currentUser) return;
+//     await firestoreDb.collection('users').doc(currentUser.uid)
+//       .update({ [key]: firebase.firestore.FieldValue.delete() });
 //   },
 // };
 */
 
 /*
-// ── FUTURE: Generic REST / backend adapter ────────────────
-// Works with any server-side store (MongoDB, S3, DynamoDB…).
-// Add a /api/user-data route and replace `storageAdapter` above.
+// ── OPTION B: Any REST backend (Node, Python, PHP, etc.) ──────────────────────
+// Works with any server that stores data — MongoDB, PostgreSQL, S3, DynamoDB…
+// HOW TO SWITCH:
+//   1. Create three endpoints on your server:
+//        GET    /api/user-data/:key  → responds with { value: <stored JSON> }
+//        PUT    /api/user-data/:key  → accepts body { value: <JSON> }, responds 200
+//        DELETE /api/user-data/:key  → responds 200
+//   2. If your API requires auth, uncomment the Authorization header lines
+//      and replace YOUR_TOKEN with your auth logic.
+//   3. Change the active line above to:   const storageAdapter = restStorageAdapter;
 //
-// const backendAdapter = {
+// const restStorageAdapter = {
 //   async get(key) {
-//     const res = await fetch(`/api/user-data/${encodeURIComponent(key)}`, {
-//       headers: { Authorization: `Bearer ${getAuthToken()}` },
-//     });
-//     return res.ok ? (await res.json()).value ?? null : null;
+//     const res = await fetch(`/api/user-data/${encodeURIComponent(key)}`);
+//     // { headers: { Authorization: 'Bearer YOUR_TOKEN' } }  ← add if needed
+//     return res.ok ? ((await res.json()).value ?? null) : null;
 //   },
 //   async set(key, value) {
 //     await fetch(`/api/user-data/${encodeURIComponent(key)}`, {
 //       method: 'PUT',
-//       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken()}` },
+//       headers: { 'Content-Type': 'application/json' },
+//       // headers: { 'Content-Type': 'application/json', Authorization: 'Bearer YOUR_TOKEN' },
 //       body: JSON.stringify({ value }),
 //     });
 //   },
 //   async remove(key) {
-//     await fetch(`/api/user-data/${encodeURIComponent(key)}`, {
-//       method: 'DELETE',
-//       headers: { Authorization: `Bearer ${getAuthToken()}` },
-//     });
+//     await fetch(`/api/user-data/${encodeURIComponent(key)}`, { method: 'DELETE' });
 //   },
 // };
 */
 
-/* =========================================================
-   GOOGLE AUTH PLACEHOLDER
-   Uncomment when you have a Firebase project ready.
-   Also: replace `storageAdapter` with `firebaseAdapter` above
-   and call `initAuth()` at the top of `init()`.
-   ========================================================= */
+/* ─────────────────────────────────────────────────────────
+   ADAPTER 2 — EMAIL
+   Sends price-alert notification emails to the user.
+
+   Required methods:
+     isAvailable()  → boolean
+       Return true when the adapter is configured and can actually send.
+       The "🔔 Notificarme por correo" button is automatically ENABLED
+       when this returns true and DISABLED when false — no HTML edits needed.
+
+     send(opts)     → Promise<{ ok: boolean, error?: string }>
+       opts = { toEmail, productName, productUrl, currentPrice, priceAtAddition }
+   ───────────────────────────────────────────────────────── */
+
+// ── ACTIVE: disabled stub (button stays disabled, nothing is sent) ─────────────
+// Replace with OPTION A or B below to enable real email notifications.
+const emailAdapter = {
+  isAvailable() { return false; },
+  async send(opts) {
+    console.warn('[emailAdapter] No email provider configured. ' +
+      'See OPTION A or B below to enable notifications.', opts);
+    return { ok: false, error: 'No email provider configured' };
+  },
+};
 
 /*
-// import { initializeApp } from 'firebase/app';
-// import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+// ── OPTION A: EmailJS (works from the browser — no server needed) ─────────────
+// Free tier: 200 emails/month. Zero backend required.
+// HOW TO SWITCH:
+//   1. Create a free account at https://www.emailjs.com
+//   2. Add an Email Service (Gmail, Outlook, etc.) and note your Service ID.
+//   3. Create an Email Template using these variable names in the message body:
+//        {{to_email}}  {{product_name}}  {{product_url}}
+//        {{current_price}}  {{price_at_addition}}
+//      Note your Template ID.
+//   4. In Account → API Keys, copy your Public Key.
+//   5. In index.html, add this script BEFORE main.js:
+//        <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+//   6. Fill in the three constants below.
+//   7. Change the active line above to:   const emailAdapter = emailJsAdapter;
 //
-// const firebaseConfig = {
-//   apiKey: 'YOUR_API_KEY',
-//   authDomain: 'YOUR_PROJECT.firebaseapp.com',
-//   projectId: 'YOUR_PROJECT_ID',
-//   storageBucket: 'YOUR_PROJECT.appspot.com',
-//   messagingSenderId: 'YOUR_SENDER_ID',
-//   appId: 'YOUR_APP_ID',
+// const EMAILJS_PUBLIC_KEY  = 'YOUR_PUBLIC_KEY';
+// const EMAILJS_SERVICE_ID  = 'YOUR_SERVICE_ID';
+// const EMAILJS_TEMPLATE_ID = 'YOUR_TEMPLATE_ID';
+// emailjs.init(EMAILJS_PUBLIC_KEY);
+//
+// const emailJsAdapter = {
+//   isAvailable() { return true; },
+//   async send({ toEmail, productName, productUrl, currentPrice, priceAtAddition }) {
+//     try {
+//       await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+//         to_email:          toEmail,
+//         product_name:      productName,
+//         product_url:       productUrl,
+//         current_price:     `\u20a1 ${currentPrice.toLocaleString('en-US')}`,
+//         price_at_addition: `\u20a1 ${priceAtAddition.toLocaleString('en-US')}`,
+//       });
+//       return { ok: true };
+//     } catch (err) {
+//       console.error('[emailAdapter] EmailJS send failed:', err);
+//       return { ok: false, error: err.message };
+//     }
+//   },
 // };
+*/
+
+/*
+// ── OPTION B: Custom backend endpoint (Node, Firebase Functions, etc.) ─────────
+// Works with any backend that can send email — SendGrid, Mailgun, AWS SES,
+// Nodemailer, Resend, etc.
+// HOW TO SWITCH:
+//   1. Create a POST endpoint on your server at /api/notify that:
+//        — accepts JSON body: { toEmail, productName, productUrl, currentPrice, priceAtAddition }
+//        — sends the email via your chosen SMTP / email API
+//        — responds with { ok: true } on success or { ok: false, error: '…' } on failure
+//   2. If your endpoint requires auth, uncomment the Authorization header line
+//      and replace YOUR_TOKEN with your auth logic.
+//   3. Change the active line above to:   const emailAdapter = backendEmailAdapter;
 //
-// const firebaseApp = initializeApp(firebaseConfig);
-// const firebaseAuth = getAuth(firebaseApp);
+// const backendEmailAdapter = {
+//   isAvailable() { return true; },
+//   async send({ toEmail, productName, productUrl, currentPrice, priceAtAddition }) {
+//     try {
+//       const res = await fetch('/api/notify', {
+//         method: 'POST',
+//         headers: {
+//           'Content-Type': 'application/json',
+//           // Authorization: 'Bearer YOUR_TOKEN',  ← uncomment if your API requires auth
+//         },
+//         body: JSON.stringify({ toEmail, productName, productUrl, currentPrice, priceAtAddition }),
+//       });
+//       const body = await res.json().catch(() => ({}));
+//       return res.ok ? { ok: true } : { ok: false, error: body.error || `HTTP ${res.status}` };
+//     } catch (err) {
+//       console.error('[emailAdapter] Backend request failed:', err);
+//       return { ok: false, error: err.message };
+//     }
+//   },
+// };
+*/
+
+/* ─────────────────────────────────────────────────────────
+   GOOGLE AUTH PLACEHOLDER
+   Lets users sign in so their favourites sync across devices.
+   HOW TO ENABLE:
+     1. Complete storageAdapter OPTION A (Firebase), steps 1–5.
+     2. In the Firebase console → Authentication → Sign-in method → enable Google.
+     3. Uncomment the block below.
+     4. In index.html, uncomment the <button id="authBtn"> in the navbar.
+     5. Add initAuth(); as the very first line inside the init() function.
+   ───────────────────────────────────────────────────────── */
+
+/*
 // let currentUser = null;
 //
 // function initAuth() {
-//   onAuthStateChanged(firebaseAuth, (user) => {
+//   firebase.auth().onAuthStateChanged((user) => {
 //     currentUser = user;
 //     updateAuthUI(user);
 //   });
 // }
 //
-// async function signInWithGoogle() {
-//   try {
-//     await signInWithPopup(firebaseAuth, new GoogleAuthProvider());
-//   } catch (err) {
-//     console.error('Google sign-in failed:', err);
-//   }
+// function signInWithGoogle() {
+//   firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider())
+//     .catch((err) => console.error('Google sign-in failed:', err));
 // }
 //
-// async function signOutUser() {
-//   await signOut(firebaseAuth);
+// function signOutUser() {
+//   firebase.auth().signOut();
 // }
 //
 // function updateAuthUI(user) {
@@ -162,7 +299,7 @@ const storageAdapter = {
 //     btn.title = 'Cerrar sesión';
 //     btn.onclick = signOutUser;
 //   } else {
-//     btn.innerHTML = '🔑 Entrar con Google';
+//     btn.innerHTML = '\uD83D\uDD11 Entrar con Google';
 //     btn.title = '';
 //     btn.onclick = signInWithGoogle;
 //   }
