@@ -38,17 +38,11 @@ let activeChart = null;
 /** @type {number} Currently selected chart date range in days */
 let selectedChartDays = DEFAULT_CHART_DAYS;
 
-/** @type {boolean} Whether to show products that are active on extremetechcr.com */
-let filterShowActive = true;
+/** @type {boolean} Whether to include products that are no longer on extremetechcr.com */
+let filterIncludeInactive = false;
 
-/** @type {boolean} Whether to show products that are no longer on extremetechcr.com */
-let filterShowInactive = false;
-
-/** @type {boolean} Whether to show products that have stock */
-let filterShowInStock = true;
-
-/** @type {boolean} Whether to show products with no stock */
-let filterShowOutOfStock = true;
+/** @type {boolean} Whether to show only products that are in stock (hides out-of-stock when true) */
+let filterOnlyInStock = false;
 
 /** @type {Map<number, import('chart.js').Chart>} Mini sparkline chart instances keyed by product ID */
 const miniChartInstances = new Map();
@@ -212,15 +206,12 @@ function filterProducts(products) {
     : '';
 
   return products.filter((p) => {
-    // Existence filter
-    if (p.isActive === 1 && !filterShowActive) return false;
-    if (p.isActive === 0 && !filterShowInactive) return false;
+    // Existence filter: always show active; only show inactive when filterIncludeInactive is on
+    if (p.isActive === 0 && !filterIncludeInactive) return false;
 
-    // Stock filter (only applied to active products; inactive ones are just shown as-is)
-    if (p.isActive === 1) {
-      const inStock = isProductInStock(p.stockLocations);
-      if (inStock && !filterShowInStock) return false;
-      if (!inStock && !filterShowOutOfStock) return false;
+    // Stock filter (only applied to active products; inactive ones are shown regardless of stock)
+    if (p.isActive === 1 && filterOnlyInStock) {
+      if (!isProductInStock(p.stockLocations)) return false;
     }
 
     // Search filter: name, URL, or SKU
@@ -626,23 +617,13 @@ function setupEventListeners() {
 
   document.getElementById('sortSelect').addEventListener('change', filterAndSort);
 
-  document.getElementById('filterActive').addEventListener('change', (e) => {
-    filterShowActive = e.target.checked;
+  document.getElementById('filterIncludeInactive').addEventListener('change', (e) => {
+    filterIncludeInactive = e.target.checked;
     filterAndSort();
   });
 
-  document.getElementById('filterInactive').addEventListener('change', (e) => {
-    filterShowInactive = e.target.checked;
-    filterAndSort();
-  });
-
-  document.getElementById('filterInStock').addEventListener('change', (e) => {
-    filterShowInStock = e.target.checked;
-    filterAndSort();
-  });
-
-  document.getElementById('filterOutOfStock').addEventListener('change', (e) => {
-    filterShowOutOfStock = e.target.checked;
+  document.getElementById('filterOnlyInStock').addEventListener('change', (e) => {
+    filterOnlyInStock = e.target.checked;
     filterAndSort();
   });
 

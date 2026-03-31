@@ -1,6 +1,11 @@
 # ExtremeTechCR Price Monitor
 
+[![Daily Price Crawler](https://github.com/andreileonsalas/extremetechcrPriceMonitor/actions/workflows/price-crawler.yml/badge.svg)](https://github.com/andreileonsalas/extremetechcrPriceMonitor/actions/workflows/price-crawler.yml)
+[![Weekly Sitemap Crawler](https://github.com/andreileonsalas/extremetechcrPriceMonitor/actions/workflows/sitemap-crawler.yml/badge.svg)](https://github.com/andreileonsalas/extremetechcrPriceMonitor/actions/workflows/sitemap-crawler.yml)
+
 Automatic price monitor for [extremetechcr.com](https://extremetechcr.com) built with Node.js, GitHub Actions, and GitHub Pages.
+
+🌐 **Live site:** [andreileonsalas.github.io/extremetechcrPriceMonitor](https://andreileonsalas.github.io/extremetechcrPriceMonitor/)
 
 ## How It Works
 
