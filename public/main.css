@@ -7,11 +7,92 @@ body {
 .product-card {
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  /* Needed so the absolute-positioned favourite button is contained */
+  position: relative;
 }
 
 .product-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Highlighted ring on favourited cards */
+.product-card.is-favorite {
+  outline: 2px solid #fd7e14;
+  outline-offset: -2px;
+}
+
+/* Heart / favourite toggle button */
+.favorite-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.85);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.favorite-btn:hover {
+  transform: scale(1.2);
+  background: rgba(255, 255, 255, 1);
+}
+
+/* Price change since the product was favourited */
+.favorite-price-change {
+  font-size: 0.72rem;
+}
+
+/* ⭐ Mis favoritos filter button — active state */
+.favorites-filter-btn.active {
+  background-color: #fd7e14;
+  border-color: #fd7e14;
+  color: #fff;
+}
+
+/* localStorage disclaimer banner */
+.disclaimer-banner {
+  background-color: #fff3cd;
+  border-bottom: 1px solid #ffc107;
+  padding: 10px 0;
+  font-size: 0.85rem;
+}
+
+.disclaimer-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.btn-close-disclaimer {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  opacity: 0.6;
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.btn-close-disclaimer:hover {
+  opacity: 1;
+}
+
+/* Modal footer actions layout */
+.modal-actions {
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .price-badge {
@@ -110,4 +191,23 @@ body {
 
 [data-bs-theme="dark"] .stock-locations {
   color: #9da5b4;
+}
+
+[data-bs-theme="dark"] .favorite-btn {
+  background: rgba(40, 44, 52, 0.88);
+}
+
+[data-bs-theme="dark"] .favorite-btn:hover {
+  background: rgba(40, 44, 52, 1);
+}
+
+[data-bs-theme="dark"] .disclaimer-banner {
+  background-color: #332b00;
+  border-bottom-color: #6e5500;
+  color: #ffc107;
+}
+
+[data-bs-theme="dark"] .disclaimer-banner code {
+  background: rgba(255,193,7,0.15);
+  color: #ffc107;
 }

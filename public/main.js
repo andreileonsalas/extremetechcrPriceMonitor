@@ -22,6 +22,153 @@ const UNKNOWN_PRODUCT_NAME = '(Producto desconocido)';
 /** @type {string} Currency symbol for CRC */
 const CRC_SYMBOL = '\u20a1';
 
+/** @type {string} localStorage key for the master app-data JSON blob (favorites, prefs, etc.) */
+const APP_DATA_KEY = 'priceMonitorAppData';
+
+/** @type {string} localStorage key that tracks whether the user dismissed the localStorage disclaimer */
+const DISCLAIMER_KEY = 'priceMonitorDisclaimerDismissed';
+
+/* =========================================================
+   STORAGE ADAPTER
+   All user-generated data (favourites, notification prefs, etc.) flows
+   through this adapter so swapping to a real backend only requires
+   replacing the object below — no other code changes needed.
+
+   The interface is synchronous (localStorage). When connecting to an
+   async backend (Firebase, REST API…) make the callers await the results.
+   ========================================================= */
+
+// ── Active implementation: localStorage ──────────────────
+const storageAdapter = {
+  /** @param {string} key @returns {any|null} */
+  get(key) {
+    try { return JSON.parse(localStorage.getItem(key)); } catch (err) {
+      console.warn('[storageAdapter] Failed to parse value for key', key, err);
+      return null;
+    }
+  },
+  /** @param {string} key @param {any} value */
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) {
+      console.warn('[storageAdapter] Failed to set value for key', key, err);
+    }
+  },
+  /** @param {string} key */
+  remove(key) {
+    try { localStorage.removeItem(key); } catch (_) {}
+  },
+};
+
+/*
+// ── FUTURE: Firebase / Firestore adapter ─────────────────
+// 1. Add Firebase SDK scripts to index.html.
+// 2. Replace `storageAdapter` above with `firebaseAdapter`.
+// 3. The APP_DATA_KEY becomes the Firestore document field name.
+//
+// import { doc, getDoc, setDoc, updateDoc, deleteField } from 'firebase/firestore';
+//
+// const firebaseAdapter = {
+//   async get(key) {
+//     const snap = await getDoc(doc(db, 'users', currentUser.uid));
+//     return snap.exists() ? (snap.data()[key] ?? null) : null;
+//   },
+//   async set(key, value) {
+//     await setDoc(doc(db, 'users', currentUser.uid), { [key]: value }, { merge: true });
+//   },
+//   async remove(key) {
+//     await updateDoc(doc(db, 'users', currentUser.uid), { [key]: deleteField() });
+//   },
+// };
+*/
+
+/*
+// ── FUTURE: Generic REST / backend adapter ────────────────
+// Works with any server-side store (MongoDB, S3, DynamoDB…).
+// Add a /api/user-data route and replace `storageAdapter` above.
+//
+// const backendAdapter = {
+//   async get(key) {
+//     const res = await fetch(`/api/user-data/${encodeURIComponent(key)}`, {
+//       headers: { Authorization: `Bearer ${getAuthToken()}` },
+//     });
+//     return res.ok ? (await res.json()).value ?? null : null;
+//   },
+//   async set(key, value) {
+//     await fetch(`/api/user-data/${encodeURIComponent(key)}`, {
+//       method: 'PUT',
+//       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken()}` },
+//       body: JSON.stringify({ value }),
+//     });
+//   },
+//   async remove(key) {
+//     await fetch(`/api/user-data/${encodeURIComponent(key)}`, {
+//       method: 'DELETE',
+//       headers: { Authorization: `Bearer ${getAuthToken()}` },
+//     });
+//   },
+// };
+*/
+
+/* =========================================================
+   GOOGLE AUTH PLACEHOLDER
+   Uncomment when you have a Firebase project ready.
+   Also: replace `storageAdapter` with `firebaseAdapter` above
+   and call `initAuth()` at the top of `init()`.
+   ========================================================= */
+
+/*
+// import { initializeApp } from 'firebase/app';
+// import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+//
+// const firebaseConfig = {
+//   apiKey: 'YOUR_API_KEY',
+//   authDomain: 'YOUR_PROJECT.firebaseapp.com',
+//   projectId: 'YOUR_PROJECT_ID',
+//   storageBucket: 'YOUR_PROJECT.appspot.com',
+//   messagingSenderId: 'YOUR_SENDER_ID',
+//   appId: 'YOUR_APP_ID',
+// };
+//
+// const firebaseApp = initializeApp(firebaseConfig);
+// const firebaseAuth = getAuth(firebaseApp);
+// let currentUser = null;
+//
+// function initAuth() {
+//   onAuthStateChanged(firebaseAuth, (user) => {
+//     currentUser = user;
+//     updateAuthUI(user);
+//   });
+// }
+//
+// async function signInWithGoogle() {
+//   try {
+//     await signInWithPopup(firebaseAuth, new GoogleAuthProvider());
+//   } catch (err) {
+//     console.error('Google sign-in failed:', err);
+//   }
+// }
+//
+// async function signOutUser() {
+//   await signOut(firebaseAuth);
+// }
+//
+// function updateAuthUI(user) {
+//   const btn = document.getElementById('authBtn');
+//   if (!btn) return;
+//   if (user) {
+//     btn.innerHTML = user.photoURL
+//       ? `<img src="${user.photoURL}" class="auth-avatar" alt="" /> ${escapeHtml(user.displayName || user.email)}`
+//       : escapeHtml(user.displayName || user.email);
+//     btn.title = 'Cerrar sesión';
+//     btn.onclick = signOutUser;
+//   } else {
+//     btn.innerHTML = '🔑 Entrar con Google';
+//     btn.title = '';
+//     btn.onclick = signInWithGoogle;
+//   }
+// }
+*/
+
 /* =========================================================
    STATE
    ========================================================= */
@@ -44,6 +191,9 @@ let filterIncludeInactive = false;
 /** @type {boolean} Whether to show only products that are in stock (hides out-of-stock when true) */
 let filterOnlyInStock = false;
 
+/** @type {boolean} Whether to show only products the user has added to their favourites */
+let filterOnlyFavorites = false;
+
 /** @type {Map<number, import('chart.js').Chart>} Mini sparkline chart instances keyed by product ID */
 const miniChartInstances = new Map();
 
@@ -58,6 +208,112 @@ let colsPerRow = (() => {
 })();
 
 /* =========================================================
+   APP DATA — master JSON object
+   Single source of truth for all user-generated data.
+   Stored under APP_DATA_KEY through `storageAdapter` so swapping the
+   backend only requires changing the adapter — no other code changes.
+
+   Shape:
+   {
+     version: 1,
+     favorites: {
+       "[productId]": {
+         productId:        number,
+         url:              string,
+         name:             string,
+         addedAt:          ISO string,
+         priceAtAddition:  number | null,
+         notifyByEmail:    boolean,   // reserved — needs SMTP / backend
+         notifyEmail:      string,    // reserved — needs SMTP / backend
+       }
+     }
+   }
+   ========================================================= */
+
+/**
+ * Loads the complete app-data object from the storage adapter.
+ * Returns a fresh default object when nothing is stored yet.
+ * @returns {{ version: number, favorites: Object }}
+ */
+function loadAppData() {
+  const saved = storageAdapter.get(APP_DATA_KEY);
+  if (saved && typeof saved === 'object' && saved.version === 1) return saved;
+  return { version: 1, favorites: {} };
+}
+
+/**
+ * Persists the complete app-data object through the storage adapter.
+ * @param {{ version: number, favorites: Object }} data
+ */
+function saveAppData(data) {
+  storageAdapter.set(APP_DATA_KEY, data);
+}
+
+/**
+ * Adds a product to the user's favourites and records the price at that moment.
+ * @param {Object} product - Product row object from the database query.
+ */
+function addFavorite(product) {
+  const data = loadAppData();
+  data.favorites[String(product.id)] = {
+    productId: product.id,
+    url: product.url,
+    name: product.name || UNKNOWN_PRODUCT_NAME,
+    addedAt: new Date().toISOString(),
+    priceAtAddition: product.price ?? null,
+    notifyByEmail: false, // reserved — needs SMTP / backend
+    notifyEmail: '',      // reserved — needs SMTP / backend
+  };
+  saveAppData(data);
+}
+
+/**
+ * Removes a product from the user's favourites.
+ * @param {number|string} productId - The product's database ID.
+ */
+function removeFavorite(productId) {
+  const data = loadAppData();
+  delete data.favorites[String(productId)];
+  saveAppData(data);
+}
+
+/**
+ * Returns true when the product is in the user's favourites list.
+ * @param {number|string} productId
+ * @returns {boolean}
+ */
+function isFavorite(productId) {
+  return Boolean(loadAppData().favorites[String(productId)]);
+}
+
+/**
+ * Returns the stored favourites map { [productId]: FavoriteEntry }.
+ * @returns {Object}
+ */
+function getFavorites() {
+  return loadAppData().favorites;
+}
+
+/**
+ * Returns the number of products in the favourites list.
+ * @returns {number}
+ */
+function getFavoriteCount() {
+  return Object.keys(getFavorites()).length;
+}
+
+/**
+ * Updates the favourites filter button label to reflect the current count.
+ */
+function updateFavoritesFilterLabel() {
+  const btn = document.getElementById('filterFavoritesBtn');
+  if (!btn) return;
+  const count = getFavoriteCount();
+  btn.textContent = count > 0 ? `⭐ Mis favoritos (${count})` : '⭐ Mis favoritos';
+  btn.classList.toggle('active', filterOnlyFavorites);
+}
+
+/* =========================================================
    INITIALIZATION
    ========================================================= */
 
@@ -68,6 +324,8 @@ let colsPerRow = (() => {
 async function init() {
   try {
     initTheme();
+    initDisclaimer();
+    updateFavoritesFilterLabel();
     setStatus('Cargando base de datos...');
     const SQL = await initSqlJs({ locateFile: () => SQL_WASM_URL });
     const dbBuffer = await loadDatabaseFromZip();
@@ -79,6 +337,19 @@ async function init() {
   } catch (err) {
     showError('Error al cargar la base de datos de productos: ' + err.message);
     console.error(err);
+  }
+}
+
+/**
+ * Shows or hides the localStorage disclaimer banner.
+ * The banner is shown once and dismissed permanently when the user closes it.
+ */
+function initDisclaimer() {
+  const banner = document.getElementById('localStorageDisclaimer');
+  if (!banner) return;
+  const dismissed = storageAdapter.get(DISCLAIMER_KEY);
+  if (!dismissed) {
+    banner.classList.remove('d-none');
   }
 }
 
@@ -295,7 +566,12 @@ function filterProducts(products) {
     ? document.getElementById('searchInput').value.toLowerCase().trim()
     : '';
 
+  const favorites = filterOnlyFavorites ? getFavorites() : null;
+
   return products.filter((p) => {
+    // Favourites filter: hide products not in the user's favourites list
+    if (favorites && !favorites[String(p.id)]) return false;
+
     // Existence filter: always show active; only show inactive when filterIncludeInactive is on
     if (p.isActive === 0 && !filterIncludeInactive) return false;
 
@@ -399,6 +675,30 @@ function renderProducts(products) {
     });
   });
 
+  // Attach favourite toggle handlers (stop propagation so the modal doesn't open)
+  grid.querySelectorAll('.favorite-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const productId = parseInt(btn.dataset.productId, 10);
+      const product = allProducts.find((p) => p.id === productId);
+      if (!product) return;
+      if (isFavorite(productId)) {
+        removeFavorite(productId);
+        btn.textContent = '🤍';
+        btn.setAttribute('aria-label', 'Agregar a favoritos');
+        btn.closest('.product-card').classList.remove('is-favorite');
+      } else {
+        addFavorite(product);
+        btn.textContent = '❤️';
+        btn.setAttribute('aria-label', 'Quitar de favoritos');
+        btn.closest('.product-card').classList.add('is-favorite');
+      }
+      updateFavoritesFilterLabel();
+      // If the favorites filter is active, re-render so the card disappears/appears correctly
+      if (filterOnlyFavorites) filterAndSort();
+    });
+  });
+
   // Render 7-day mini sparklines below each product image
   renderMiniCharts(shown);
 }
@@ -421,11 +721,19 @@ function buildProductCardHtml(product) {
   const priceHtml = buildPriceHtml(product);
   const stockHtml = buildStockHtml(product.stockLocations);
   const statusBadges = buildStatusBadges(product);
+  const favorited = isFavorite(product.id);
+  const favoriteClass = favorited ? ' is-favorite' : '';
+  const favoriteIcon = favorited ? '❤️' : '🤍';
+  const favoriteLabel = favorited ? 'Quitar de favoritos' : 'Agregar a favoritos';
+  const priceSinceFavoriteHtml = buildPriceSinceFavoriteHtml(product);
 
   return `
-    <div class="card h-100 product-card"
+    <div class="card h-100 product-card${favoriteClass}"
          data-product-id="${product.id}"
          data-product-name="${escapeHtml(product.name || '')}">
+      <button class="favorite-btn" data-product-id="${product.id}"
+              aria-label="${favoriteLabel}"
+              onclick="event.stopPropagation()">${favoriteIcon}</button>
       ${imgHtml}
       <div class="mini-chart-wrapper">
         <canvas class="mini-chart-canvas" data-product-id="${product.id}"></canvas>
@@ -435,12 +743,35 @@ function buildProductCardHtml(product) {
         ${category ? `<p class="card-text text-muted small mb-1">${category}</p>` : ''}
         ${statusBadges}
         ${priceHtml}
+        ${priceSinceFavoriteHtml}
         ${stockHtml}
       </div>
       <div class="card-footer text-muted small">
         <a href="${escapeHtml(product.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver en ExtremeTechCR</a>
       </div>
     </div>`;
+}
+
+/**
+ * Builds a small "precio desde que lo agregaste" indicator for favourited products.
+ * Shows the price change since the user added the product to favourites.
+ * Returns an empty string for non-favourited products.
+ * @param {Object} product - Product row object with price field.
+ * @returns {string} HTML snippet or empty string.
+ */
+function buildPriceSinceFavoriteHtml(product) {
+  const favorites = getFavorites();
+  const entry = favorites[String(product.id)];
+  if (!entry || entry.priceAtAddition == null || entry.priceAtAddition === 0 || product.price == null) return '';
+  const diff = product.price - entry.priceAtAddition;
+  if (diff === 0) return '';
+  const pct = Math.round(Math.abs(diff / entry.priceAtAddition) * 100);
+  if (pct === 0) return '';
+  const arrow = diff < 0 ? '↓' : '↑';
+  const colorClass = diff < 0 ? 'text-success' : 'text-danger';
+  const addedDate = formatDate(new Date(entry.addedAt));
+  const titleText = `Precio cuando lo agregaste: ${CRC_SYMBOL} ${formatNumber(entry.priceAtAddition)} (${addedDate})`;
+  return `<div class="favorite-price-change ${colorClass} small mt-1" title="${titleText}">${arrow} ${pct}% desde que lo agregaste</div>`;
 }
 
 /**
@@ -625,10 +956,27 @@ function openPriceModal(productId, name) {
 
   renderPriceChart(productId, selectedChartDays);
 
-  // Store current productId for range changes
+  // Update the in-modal favourite button
+  updateModalFavoriteBtn(productId);
+
+  // Store current productId for range changes and modal actions
   document.getElementById('priceModal').dataset.productId = productId;
   const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('priceModal'));
   modal.show();
+}
+
+/**
+ * Refreshes the favourite toggle button inside the price modal.
+ * @param {number} productId
+ */
+function updateModalFavoriteBtn(productId) {
+  const btn = document.getElementById('modalFavoriteBtn');
+  if (!btn) return;
+  const favorited = isFavorite(productId);
+  btn.textContent = favorited ? '❤️ Quitar de favoritos' : '🤍 Agregar a favoritos';
+  btn.classList.toggle('btn-danger', favorited);
+  btn.classList.toggle('btn-outline-secondary', !favorited);
+  btn.dataset.productId = productId;
 }
 
 /**
@@ -750,6 +1098,16 @@ function setupEventListeners() {
     filterAndSort();
   });
 
+  // Favourites filter toggle
+  const favBtn = document.getElementById('filterFavoritesBtn');
+  if (favBtn) {
+    favBtn.addEventListener('click', () => {
+      filterOnlyFavorites = !filterOnlyFavorites;
+      updateFavoritesFilterLabel();
+      filterAndSort();
+    });
+  }
+
   document.querySelectorAll('.range-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.range-btn').forEach((b) => b.classList.remove('active'));
@@ -772,6 +1130,44 @@ function setupEventListeners() {
       applyColsPerRow();
     });
   });
+
+  // In-modal favourite toggle
+  const modalFavBtn = document.getElementById('modalFavoriteBtn');
+  if (modalFavBtn) {
+    modalFavBtn.addEventListener('click', () => {
+      const productId = parseInt(modalFavBtn.dataset.productId, 10);
+      const product = allProducts.find((p) => p.id === productId);
+      if (!product) return;
+      if (isFavorite(productId)) {
+        removeFavorite(productId);
+      } else {
+        addFavorite(product);
+      }
+      updateModalFavoriteBtn(productId);
+      updateFavoritesFilterLabel();
+      // Refresh the card in the grid if it's visible
+      const card = document.querySelector(`.product-card[data-product-id="${productId}"]`);
+      if (card) {
+        const favCardBtn = card.querySelector('.favorite-btn');
+        const favorited = isFavorite(productId);
+        if (favCardBtn) {
+          favCardBtn.textContent = favorited ? '❤️' : '🤍';
+          favCardBtn.setAttribute('aria-label', favorited ? 'Quitar de favoritos' : 'Agregar a favoritos');
+        }
+        card.classList.toggle('is-favorite', favorited);
+      }
+    });
+  }
+
+  // Dismiss the localStorage disclaimer banner
+  const disclaimerDismiss = document.getElementById('disclaimerDismiss');
+  if (disclaimerDismiss) {
+    disclaimerDismiss.addEventListener('click', () => {
+      storageAdapter.set(DISCLAIMER_KEY, true);
+      const banner = document.getElementById('localStorageDisclaimer');
+      if (banner) banner.classList.add('d-none');
+    });
+  }
 }
 
 /* =========================================================
