@@ -31,10 +31,10 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: 'npm'
@@ -43,7 +43,7 @@ jobs:
         run: npm ci
 
       - name: Restore database from previous run
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: data/prices.db
           key: sqlite-db-v2-${{ github.run_id }}
@@ -55,14 +55,14 @@ jobs:
         run: npm run prepare-chunks
 
       - name: Upload database for workers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: main-db
           path: data/prices.db
           if-no-files-found: error
 
       - name: Upload URL chunks for workers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chunks
           path: chunks/
@@ -79,10 +79,10 @@ jobs:
       fail-fast: false   # let surviving workers finish even if one fails
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: 'npm'
@@ -94,13 +94,13 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Download database
-        uses: actions/download-artifact@v4.1.3
+        uses: actions/download-artifact@v8
         with:
           name: main-db
           path: data/
 
       - name: Download URL chunks
-        uses: actions/download-artifact@v4.1.3
+        uses: actions/download-artifact@v8
         with:
           name: chunks
           path: chunks/
@@ -117,7 +117,7 @@ jobs:
 
       - name: Upload worker database
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: worker-db-${{ matrix.worker }}
           path: data/worker-${{ matrix.worker }}.db
@@ -130,10 +130,10 @@ jobs:
     if: always()   # run even when some workers fail so partial results are saved
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: 'npm'
@@ -142,13 +142,13 @@ jobs:
         run: npm ci
 
       - name: Download main database (baseline)
-        uses: actions/download-artifact@v4.1.3
+        uses: actions/download-artifact@v8
         with:
           name: main-db
           path: data/
 
       - name: Download all worker databases
-        uses: actions/download-artifact@v4.1.3
+        uses: actions/download-artifact@v8
         with:
           pattern: worker-db-*
           path: data/workers/
@@ -158,7 +158,7 @@ jobs:
         run: npm run merge-workers
 
       - name: Save merged database to cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: data/prices.db
           key: sqlite-db-v2-${{ github.run_id }}
