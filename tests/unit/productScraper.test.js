@@ -14,6 +14,8 @@ const {
   scrapeProductFromHtml,
   buildHtmlDebug,
   isCloudflareChallenge,
+  extractPublishedDate,
+  normaliseDate,
 } = require('../../src/scraper/productScraper');
 const { load } = require('cheerio');
 
@@ -956,6 +958,113 @@ describe('productScraper', () => {
     test('returns null when selector does not match', () => {
       const $ = load('<html><body></body></html>');
       expect(extractText($, 'h1.product_title')).toBeNull();
+    });
+  });
+
+  /* =========================================================
+     extractPublishedDate / normaliseDate
+     ========================================================= */
+
+  describe('normaliseDate', () => {
+    test('returns YYYY-MM-DD from a full ISO timestamp', () => {
+      expect(normaliseDate('2023-06-15T10:30:00+00:00')).toBe('2023-06-15');
+    });
+
+    test('returns YYYY-MM-DD from a plain date string', () => {
+      expect(normaliseDate('2024-01-01')).toBe('2024-01-01');
+    });
+
+    test('returns null for non-date strings', () => {
+      expect(normaliseDate('not-a-date')).toBeNull();
+    });
+
+    test('returns null for null/undefined input', () => {
+      expect(normaliseDate(null)).toBeNull();
+      expect(normaliseDate(undefined)).toBeNull();
+    });
+
+    test('returns null for invalid date like 2023-99-99', () => {
+      expect(normaliseDate('2023-99-99')).toBeNull();
+    });
+  });
+
+  describe('extractPublishedDate', () => {
+    test('extracts date from article:published_time meta tag', () => {
+      const html = `<html><head>
+        <meta property="article:published_time" content="2023-06-15T10:30:00+00:00" />
+      </head><body></body></html>`;
+      const $ = load(html);
+      expect(extractPublishedDate($)).toBe('2023-06-15');
+    });
+
+    test('extracts date from JSON-LD schema datePublished', () => {
+      const html = `<html><head>
+        <script type="application/ld+json">{"@type":"Product","name":"Test","datePublished":"2023-03-20"}</script>
+      </head><body></body></html>`;
+      const $ = load(html);
+      expect(extractPublishedDate($)).toBe('2023-03-20');
+    });
+
+    test('extracts date from JSON-LD dateCreated when datePublished is absent', () => {
+      const html = `<html><head>
+        <script type="application/ld+json">{"@type":"Product","dateCreated":"2022-11-01"}</script>
+      </head><body></body></html>`;
+      const $ = load(html);
+      expect(extractPublishedDate($)).toBe('2022-11-01');
+    });
+
+    test('extracts date from itemprop="datePublished" content attribute', () => {
+      const html = `<html><body>
+        <meta itemprop="datePublished" content="2023-09-10" />
+      </body></html>`;
+      const $ = load(html);
+      expect(extractPublishedDate($)).toBe('2023-09-10');
+    });
+
+    test('extracts date from WordPress time.published element datetime attribute', () => {
+      const html = `<html><body>
+        <time class="entry-date published" datetime="2023-12-01T08:00:00+00:00">1 de diciembre de 2023</time>
+      </body></html>`;
+      const $ = load(html);
+      expect(extractPublishedDate($)).toBe('2023-12-01');
+    });
+
+    test('returns null when no date information is present', () => {
+      const html = `<html><head></head><body><p>No dates here</p></body></html>`;
+      const $ = load(html);
+      expect(extractPublishedDate($)).toBeNull();
+    });
+
+    test('prefers article:published_time over JSON-LD', () => {
+      const html = `<html><head>
+        <meta property="article:published_time" content="2023-01-01T00:00:00Z" />
+        <script type="application/ld+json">{"@type":"Product","datePublished":"2023-06-15"}</script>
+      </head><body></body></html>`;
+      const $ = load(html);
+      expect(extractPublishedDate($)).toBe('2023-01-01');
+    });
+
+    test('scrapeProductFromHtml includes publishedDate field', () => {
+      const html = `<!DOCTYPE html>
+      <html>
+      <head>
+        <meta property="article:published_time" content="2024-02-14T09:00:00Z" />
+      </head>
+      <body class="single-product woocommerce">
+        <div class="product" itemscope itemtype="https://schema.org/Product">
+          <h1 class="product_title entry-title">Test Product</h1>
+          <div class="summary entry-summary">
+            <p class="price">
+              <span class="woocommerce-Price-amount amount">
+                <bdi><span class="woocommerce-Price-currencySymbol">&#8353;</span>25.000</bdi>
+              </span>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>`;
+      const result = scrapeProductFromHtml('https://extremetechcr.com/producto/test', html);
+      expect(result.publishedDate).toBe('2024-02-14');
     });
   });
 });

@@ -350,4 +350,53 @@ describe('database', () => {
       expect(result.warnings.some((w) => w.includes('ExtremeTechCR'))).toBe(true);
     });
   });
+
+  describe('upsertProduct publishedDate handling', () => {
+    const URL = 'https://extremetechcr.com/producto/date-test';
+
+    test('stores publishedDate in both First and Latest on first insert', () => {
+      db.upsertProduct({ url: URL, name: 'P', sku: null, category: null, description: null, imageUrl: null, isAvailable: true, publishedDate: '2023-01-15' });
+      const p = db.getProductByUrl(URL);
+      expect(p.publishedDateFirst).toBe('2023-01-15');
+      expect(p.publishedDateLatest).toBe('2023-01-15');
+      expect(p.publishedDateFirstScrapedAt).not.toBeNull();
+      expect(p.publishedDateLatestScrapedAt).not.toBeNull();
+    });
+
+    test('does not overwrite publishedDateFirst on second upsert with same date', () => {
+      db.upsertProduct({ url: URL, name: 'P', sku: null, category: null, description: null, imageUrl: null, isAvailable: true, publishedDate: '2023-01-15' });
+      const first = db.getProductByUrl(URL);
+      db.upsertProduct({ url: URL, name: 'P', sku: null, category: null, description: null, imageUrl: null, isAvailable: true, publishedDate: '2023-01-15' });
+      const second = db.getProductByUrl(URL);
+      expect(second.publishedDateFirst).toBe(first.publishedDateFirst);
+      expect(second.publishedDateFirstScrapedAt).toBe(first.publishedDateFirstScrapedAt);
+    });
+
+    test('keeps publishedDateFirst frozen when site changes the date', () => {
+      db.upsertProduct({ url: URL, name: 'P', sku: null, category: null, description: null, imageUrl: null, isAvailable: true, publishedDate: '2023-01-15' });
+      db.upsertProduct({ url: URL, name: 'P', sku: null, category: null, description: null, imageUrl: null, isAvailable: true, publishedDate: '2024-06-01' });
+      const p = db.getProductByUrl(URL);
+      expect(p.publishedDateFirst).toBe('2023-01-15');
+      expect(p.publishedDateLatest).toBe('2024-06-01');
+    });
+
+    test('leaves all date fields null when no publishedDate is scraped', () => {
+      db.upsertProduct({ url: URL, name: 'P', sku: null, category: null, description: null, imageUrl: null, isAvailable: true });
+      const p = db.getProductByUrl(URL);
+      expect(p.publishedDateFirst).toBeNull();
+      expect(p.publishedDateLatest).toBeNull();
+      expect(p.publishedDateFirstScrapedAt).toBeNull();
+      expect(p.publishedDateLatestScrapedAt).toBeNull();
+    });
+
+    test('sets publishedDateFirst on first update that contains a date', () => {
+      // Insert without date
+      db.upsertProduct({ url: URL, name: 'P', sku: null, category: null, description: null, imageUrl: null, isAvailable: true });
+      // Update with date
+      db.upsertProduct({ url: URL, name: 'P', sku: null, category: null, description: null, imageUrl: null, isAvailable: true, publishedDate: '2023-05-10' });
+      const p = db.getProductByUrl(URL);
+      expect(p.publishedDateFirst).toBe('2023-05-10');
+      expect(p.publishedDateLatest).toBe('2023-05-10');
+    });
+  });
 });
