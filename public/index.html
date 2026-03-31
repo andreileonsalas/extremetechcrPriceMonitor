@@ -1,8 +1,22 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-bs-theme="light">
 <head>
   <meta charset="UTF-8" />
+  <!-- Set theme before CSS loads to prevent flash of wrong theme -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-bs-theme',
+          saved === 'dark' || saved === 'light' ? saved : (prefersDark ? 'dark' : 'light'));
+      } catch (_) {}
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="index, follow" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="description" content="Monitor automático de precios de extremetechcr.com. Consulta el historial de precios y disponibilidad en tiendas. Sitio: https://andreileonsalas.github.io/extremetechcrPriceMonitor/" />
   <title>ExtremeTechCR Price Monitor</title>
   <link rel="stylesheet" href="vendor/bootstrap.min.css" />
   <link rel="stylesheet" href="main.css" />
@@ -11,7 +25,11 @@
   <nav class="navbar navbar-dark bg-dark">
     <div class="container">
       <span class="navbar-brand fw-bold">ExtremeTechCR Price Monitor</span>
-      <span id="dbStatus" class="text-light small"></span>
+      <div class="d-flex align-items-center gap-3">
+        <a href="https://andreileonsalas.github.io/unimartMonitor/" class="text-light small text-decoration-none" target="_blank" rel="noopener">UniMart Monitor ↗</a>
+        <span id="dbStatus" class="text-light small"></span>
+        <button id="themeToggle" class="btn btn-outline-light btn-sm" aria-label="Cambiar a modo oscuro">🌙</button>
+      </div>
     </div>
   </nav>
 
@@ -31,10 +49,19 @@
           <option value="name-desc">Nombre (Z-A)</option>
           <option value="price-asc">Precio (menor a mayor)</option>
           <option value="price-desc">Precio (mayor a menor)</option>
+          <option value="discount-desc">Mayor bajada de precio</option>
+          <option value="increase-desc">Mayor subida de precio</option>
         </select>
       </div>
-      <div class="col-md-3 text-end">
-        <span id="productCount" class="text-muted small mt-2 d-inline-block"></span>
+      <div class="col-md-3 d-flex align-items-center justify-content-end gap-2">
+        <div class="btn-group btn-group-sm d-none d-md-inline-flex" role="group"
+             aria-label="Columnas por fila" id="colsSelector">
+          <button type="button" class="btn btn-outline-secondary active"
+                  data-cols="3" aria-label="3 columnas por fila">3</button>
+          <button type="button" class="btn btn-outline-secondary"
+                  data-cols="4" aria-label="4 columnas por fila">4</button>
+        </div>
+        <span id="productCount" class="text-muted small"></span>
       </div>
     </div>
 

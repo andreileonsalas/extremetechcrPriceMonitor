@@ -360,12 +360,32 @@ function extractDiscountPercentage($) {
 
 /**
  * Extracts per-store stock location data from the product page.
- * Tries multiple container/row selector pairs defined in STOCK_LOCATION_SELECTORS.
- * Falls back to parsing visible stock text if no structured table is found.
+ * First tries the custom .store-item structure used by extremetechcr.com (Woodmart theme),
+ * then falls back to standard WooCommerce table/list selectors from STOCK_LOCATION_SELECTORS.
  * @param {import('cheerio').CheerioAPI} $ - Loaded Cheerio instance.
  * @returns {StockLocation[]} Array of location objects with name and quantity.
  */
 function extractStockLocations($) {
+  // Primary: custom store-item structure used by extremetechcr.com.
+  // Each .store-item contains .store-name (location) and .status .status-text (availability).
+  // Status CSS classes: status-out (0 units), status-available (>=1), status-limited (N from text).
+  const storeItems = $('.store-item');
+  if (storeItems.length > 0) {
+    const stockLocations = [];
+    storeItems.each((_, el) => {
+      const locationName = $(el).find('.store-name').text().trim();
+      const statusEl = $(el).find('.status');
+      const statusClass = statusEl.attr('class') || '';
+      const statusText = $(el).find('.status-text').text().trim();
+      const qty = parseStoreStatusQuantity(statusClass, statusText);
+      if (locationName && qty !== null) {
+        stockLocations.push({ location: locationName, quantity: qty });
+      }
+    });
+    if (stockLocations.length > 0) return stockLocations;
+  }
+
+  // Fallback: standard WooCommerce table/list selectors.
   for (const [containerSel, rowSel] of STOCK_LOCATION_SELECTORS) {
     const container = $(containerSel);
     if (!container.length) continue;
@@ -392,6 +412,30 @@ function extractStockLocations($) {
   }
 
   return [];
+}
+
+/**
+ * Parses store availability from the custom extremetechcr.com .store-item HTML structure.
+ * Uses the CSS class on the .status element to determine stock level, falling back to
+ * parsing a digit from the status text for the "status-limited" case.
+ *   status-out       -> 0 (no stock: "No disponible")
+ *   status-available -> 1 (in stock: "Disponible")
+ *   status-limited   -> N parsed from text (limited: "Queda 1", "Quedan 2")
+ * @param {string} statusClass - The class attribute of the .status element.
+ * @param {string} statusText - The text content of the .status-text element.
+ * @returns {number|null} Quantity (0 = out of stock), or null if unrecognized.
+ */
+function parseStoreStatusQuantity(statusClass, statusText) {
+  if (statusClass.includes('status-out')) return 0;
+  if (statusClass.includes('status-available')) return 1;
+  if (statusClass.includes('status-limited')) {
+    const match = statusText.match(/(\d+)/);
+    return match ? parseInt(match[1], 10) : 1;
+  }
+  // Unknown status class: try to extract a digit from the text as a best-effort fallback.
+  const match = statusText.match(/(\d+)/);
+  if (match) return parseInt(match[1], 10);
+  return null;
 }
 
 /**
@@ -452,6 +496,7 @@ module.exports = {
   extractCurrencySymbol,
   extractDiscountPercentage,
   extractStockLocations,
+  parseStoreStatusQuantity,
   parseStockQuantity,
   parseStockLocationText,
   checkAvailability,

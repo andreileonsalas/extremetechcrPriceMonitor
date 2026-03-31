@@ -51,6 +51,9 @@ function createTestDatabase() {
   `);
 
   const now = new Date().toISOString();
+  const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const weekAgo = new Date(Date.now() - ONE_WEEK_MS).toISOString();
+
   const insertProduct = db.prepare(`
     INSERT INTO products (url, name, sku, category, description, imageUrl, stockLocations, firstSeenAt, lastCheckedAt, isActive)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -59,10 +62,15 @@ function createTestDatabase() {
     INSERT INTO priceHistory (productId, price, originalPrice, currency, startDate)
     VALUES (?, ?, ?, 'CRC', ?)
   `);
+  const insertPrevPrice = db.prepare(`
+    INSERT INTO priceHistory (productId, price, originalPrice, currency, startDate, endDate)
+    VALUES (?, ?, ?, 'CRC', ?, ?)
+  `);
 
   /**
    * Seed data - includes the 3 required specific products plus extras.
    * originalPrice is non-null for products on sale (Razer Kraken).
+   * prevPrice is non-null for products whose price changed, enabling discount-sort tests.
    * The Memoria RAM product is inactive (removed from the site) for filter tests.
    */
   const seedData = [
@@ -72,6 +80,7 @@ function createTestDatabase() {
       sku: 'CPU1011',
       category: 'Procesadores',
       price: 39900,
+      prevPrice: 45000,
       originalPrice: null,
       isActive: 1,
       stockLocations: JSON.stringify([
@@ -86,6 +95,7 @@ function createTestDatabase() {
       sku: 'MT2736',
       category: 'Monitores',
       price: 34900,
+      prevPrice: 39900,
       originalPrice: null,
       isActive: 1,
       stockLocations: JSON.stringify([{ location: 'Guapiles', quantity: 1 }]),
@@ -96,6 +106,7 @@ function createTestDatabase() {
       sku: 'HE6006',
       category: 'Audifonos',
       price: 67901,
+      prevPrice: null,
       originalPrice: 69900,
       isActive: 1,
       stockLocations: JSON.stringify([
@@ -110,6 +121,7 @@ function createTestDatabase() {
       sku: 'LT001',
       category: 'Laptops',
       price: 850000,
+      prevPrice: 800000,
       originalPrice: null,
       isActive: 1,
       stockLocations: null,
@@ -120,6 +132,7 @@ function createTestDatabase() {
       sku: 'MS001',
       category: 'Mouses',
       price: 45000,
+      prevPrice: null,
       originalPrice: null,
       isActive: 1,
       stockLocations: null,
@@ -130,14 +143,18 @@ function createTestDatabase() {
       sku: 'MM001',
       category: 'Memorias RAM',
       price: 25000,
+      prevPrice: null,
       originalPrice: null,
       isActive: 0, // Product has been removed from the site
       stockLocations: null,
     },
   ];
 
-  seedData.forEach(({ url, name, sku, category, price, originalPrice, isActive, stockLocations }) => {
+  seedData.forEach(({ url, name, sku, category, price, prevPrice, originalPrice, isActive, stockLocations }) => {
     const result = insertProduct.run(url, name, sku, category, null, null, stockLocations, now, now, isActive ?? 1);
+    if (prevPrice != null) {
+      insertPrevPrice.run(result.lastInsertRowid, prevPrice, null, weekAgo, now);
+    }
     insertPrice.run(result.lastInsertRowid, price, originalPrice, now);
   });
 
@@ -453,5 +470,114 @@ test.describe('REQUIRED: Razer Kraken Kitty Edition V2 Pro Rosa (HE6006)', () =>
     const stockHtml = await card.locator('.stock-locations').textContent();
     expect(stockHtml).toContain('San Jose Centro');
     expect(stockHtml).toContain('Alajuela');
+  });
+});
+
+test.describe('Frontend - Dark Mode Toggle', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#loadingState')).toBeHidden({ timeout: 15000 });
+  });
+
+  test('theme toggle button is visible in the navbar', async ({ page }) => {
+    await expect(page.locator('#themeToggle')).toBeVisible();
+  });
+
+  test('clicking the toggle switches from light to dark mode', async ({ page }) => {
+    // Start in light mode (default when no localStorage value and no system dark pref)
+    await page.evaluate(() => localStorage.removeItem('theme'));
+    await page.evaluate(() => document.documentElement.setAttribute('data-bs-theme', 'light'));
+    await page.locator('#themeToggle').click();
+    const theme = await page.evaluate(() =>
+      document.documentElement.getAttribute('data-bs-theme'));
+    expect(theme).toBe('dark');
+  });
+
+  test('clicking the toggle again switches back to light mode', async ({ page }) => {
+    await page.evaluate(() => document.documentElement.setAttribute('data-bs-theme', 'dark'));
+    await page.locator('#themeToggle').click();
+    const theme = await page.evaluate(() =>
+      document.documentElement.getAttribute('data-bs-theme'));
+    expect(theme).toBe('light');
+  });
+
+  test('theme preference is saved in localStorage', async ({ page }) => {
+    await page.evaluate(() => document.documentElement.setAttribute('data-bs-theme', 'light'));
+    await page.locator('#themeToggle').click();
+    const stored = await page.evaluate(() => localStorage.getItem('theme'));
+    expect(stored).toBe('dark');
+  });
+});
+
+test.describe('Frontend - Columns Selector', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#loadingState')).toBeHidden({ timeout: 15000 });
+  });
+
+  test('columns selector is visible on wide viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.locator('#colsSelector')).toBeVisible();
+  });
+
+  test('clicking 4-column button switches grid to 4 columns', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.locator('#colsSelector [data-cols="4"]').click();
+    const gridClass = await page.locator('#productGrid').getAttribute('class');
+    expect(gridClass).toContain('row-cols-md-4');
+  });
+
+  test('clicking 3-column button switches grid back to 3 columns', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.locator('#colsSelector [data-cols="4"]').click();
+    await page.locator('#colsSelector [data-cols="3"]').click();
+    const gridClass = await page.locator('#productGrid').getAttribute('class');
+    expect(gridClass).toContain('row-cols-md-3');
+  });
+});
+
+test.describe('Frontend - Discount Sort', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#loadingState')).toBeHidden({ timeout: 15000 });
+  });
+
+  test('sort options include discount options', async ({ page }) => {
+    const options = page.locator('#sortSelect option');
+    const values = await options.evaluateAll((opts) => opts.map((o) => o.value));
+    expect(values).toContain('discount-desc');
+    expect(values).toContain('increase-desc');
+  });
+
+  test('sorting by discount-desc places a price-drop product first', async ({ page }) => {
+    await page.selectOption('#sortSelect', 'discount-desc');
+    // Intel Pentium dropped from 45000 to 39900 (~11.3%) and
+    // MSI Monitor dropped from 39900 to 34900 (~12.5%); both are bigger drops than any other product.
+    // ASUS Laptop rose from 800000 to 850000 (6.25% increase).
+    // After sorting by biggest price drop, the products with a drop should come before
+    // those with no price change or a rise.
+    const firstCardTitle = await page.locator('.product-card .card-title').first().textContent();
+    // The first card should be one that had a price drop (not the laptop that rose)
+    const firstTitleLower = firstCardTitle.toLowerCase();
+    expect(firstTitleLower).not.toContain('asus gaming laptop');
+    expect(firstTitleLower).not.toContain('logitech');
+  });
+
+  test('sorting by increase-desc places a price-rise product first', async ({ page }) => {
+    await page.selectOption('#sortSelect', 'increase-desc');
+    // ASUS Gaming Laptop rose from 800000 to 850000 (6.25%)
+    const firstCardTitle = await page.locator('.product-card .card-title').first().textContent();
+    expect(firstCardTitle.toLowerCase()).toContain('asus');
+  });
+
+  test('price-change badge appears on product cards with a previous price', async ({ page }) => {
+    // Intel Pentium Gold G6405 has a prevPrice (45000 → 39900, ~11% drop)
+    await page.fill('#searchInput', 'Pentium');
+    await page.waitForTimeout(400);
+    const badge = page.locator('.product-card .price-change-badge').first();
+    await expect(badge).toBeVisible();
+    const text = await badge.textContent();
+    expect(text).toMatch(/↓/);
+    expect(text).toMatch(/\d+%/);
   });
 });
