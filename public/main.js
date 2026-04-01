@@ -303,13 +303,27 @@ function updateAuthUI(user) {
   if (btn) {
     if (window.__firebaseAuth) btn.classList.remove('d-none');
     if (user && !user.isAnonymous) {
-      btn.innerHTML = user.photoURL
-        ? `<img src="${escapeHtml(user.photoURL)}" class="auth-avatar" alt="" loading="lazy" /> ${escapeHtml(user.displayName || user.email || 'Usuario')}`
-        : escapeHtml(user.displayName || user.email || 'Usuario');
+      // Use DOM manipulation to safely set button content and avoid XSS via innerHTML
+      btn.textContent = '';  // clear existing children
+      const displayName = user.displayName || user.email || 'Usuario';
+      if (user.photoURL) {
+        // Validate photoURL is an HTTPS URL before using it as an image source
+        const isSafeUrl = /^https:\/\//i.test(user.photoURL);
+        if (isSafeUrl) {
+          const img = document.createElement('img');
+          img.src = user.photoURL;
+          img.className = 'auth-avatar';
+          img.alt = '';
+          img.loading = 'lazy';
+          btn.appendChild(img);
+          btn.appendChild(document.createTextNode(' '));
+        }
+      }
+      btn.appendChild(document.createTextNode(displayName));
       btn.title = 'Cerrar sesión';
       btn.onclick = signOutUser;
     } else {
-      btn.innerHTML = '🔑 Iniciar sesión';
+      btn.textContent = '🔑 Iniciar sesión';
       btn.title = 'Iniciar sesión con Google para sincronizar entre dispositivos';
       btn.onclick = signInWithGoogle;
     }
@@ -583,7 +597,7 @@ async function loadExistingAlertInfo(productId) {
     const targetText = alert.targetPrice
       ? `objetivo: ${CRC_SYMBOL} ${formatNumber(alert.targetPrice)}`
       : 'cualquier bajada';
-    if (textEl) textEl.textContent = `✓ Alerta activa para ${escapeHtml(alert.email)} (${targetText})`;
+    if (textEl) textEl.textContent = `✓ Alerta activa para ${alert.email} (${targetText})`;
     infoEl.classList.remove('d-none');
     if (deleteBtn) {
       deleteBtn.onclick = async () => {
@@ -1153,7 +1167,11 @@ async function openAlertsModal() {
         ? `${CRC_SYMBOL} ${formatNumber(a.priceAtCreation)}`
         : '—';
       const lastTriggered = a.lastTriggeredAt
-        ? new Date(a.lastTriggeredAt.toDate()).toLocaleDateString('es-CR')
+        ? new Date(
+            typeof a.lastTriggeredAt.toDate === 'function'
+              ? a.lastTriggeredAt.toDate()
+              : a.lastTriggeredAt
+          ).toLocaleDateString('es-CR')
         : 'Nunca';
 
       row.innerHTML = `

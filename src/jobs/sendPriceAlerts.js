@@ -58,6 +58,7 @@ const path   = require('path');
 const AdmZip = require('adm-zip');
 const Database = require('better-sqlite3');
 const nodemailer = require('nodemailer');
+const admin = require('firebase-admin');
 const { getFirestore } = require('../firebase/firebaseAdmin');
 
 /* ── Configuration ──────────────────────────────────────────────────────────── */
@@ -266,16 +267,21 @@ async function main() {
     }
 
     const currentPrice  = row.price;
-    const previousPrice = priceAtCreation || currentPrice;
+    const previousPrice = priceAtCreation || null;
 
     // Check if the alert condition is met
     let shouldNotify = false;
-    if (targetPrice && currentPrice <= targetPrice && currentPrice < previousPrice) {
+    if (targetPrice && currentPrice <= targetPrice) {
+      // Target price alert: fire when price is at or below the target
       shouldNotify = true;
       console.log(`[sendPriceAlerts] Alert ${doc.id}: target price met (${currentPrice} <= ${targetPrice})`);
-    } else if (notifyOnAnyDrop && currentPrice < previousPrice) {
+    } else if (notifyOnAnyDrop && previousPrice !== null && currentPrice < previousPrice) {
+      // Any-drop alert: fire when price dropped since alert was created / last triggered
       shouldNotify = true;
       console.log(`[sendPriceAlerts] Alert ${doc.id}: price drop detected (${currentPrice} < ${previousPrice})`);
+    } else if (!previousPrice) {
+      // No baseline price recorded yet — update it silently but do not notify
+      await doc.ref.update({ priceAtCreation: currentPrice }).catch(() => {});
     }
 
     if (!shouldNotify) continue;
@@ -292,7 +298,7 @@ async function main() {
           productName,
           productUrl,
           currentPrice,
-          previousPrice,
+          previousPrice: previousPrice !== null ? previousPrice : currentPrice,
           targetPrice: targetPrice || null,
         }),
       });
@@ -307,7 +313,7 @@ async function main() {
     // so the next alert only fires if the price drops again from the current level.
     try {
       await doc.ref.update({
-        lastTriggeredAt: new Date().toISOString(),
+        lastTriggeredAt: admin.firestore.FieldValue.serverTimestamp(),
         priceAtCreation: currentPrice,  // Reset baseline so future drop is relative to this
       });
     } catch (e) {

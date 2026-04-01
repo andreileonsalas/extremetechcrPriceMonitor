@@ -33,7 +33,10 @@
 name: Price Alert Emails
 
 on:
-  # Runs 30 minutes after the daily price crawl (daily at 3am UTC → this at 3:30am UTC)
+  # Runs 30 minutes after the daily price crawl (price-crawler.yml runs at 3:00am UTC).
+  # The 30-minute gap gives the crawl time to finish its parallel workers and commit db.zip.
+  # If the crawl is still running when this job starts, the alerts will be based on the
+  # previous db.zip, which is acceptable — they will re-evaluate in the next run.
   schedule:
     - cron: '30 3 * * *'
 
@@ -50,6 +53,8 @@ jobs:
     name: Send Price Alert Emails
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read  # Needed to checkout the repo and read db.zip
 
     # Only run when the required secrets are configured
     # (prevents spurious failures on forks / branches without secrets)

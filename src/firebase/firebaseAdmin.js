@@ -55,7 +55,9 @@ function initAdmin() {
     credential: admin.credential.cert(serviceAccount),
   });
 
-  console.info('[Firebase Admin] Initialized — project:', serviceAccount.project_id);
+  // Log success without printing any fields from the service account object
+  // (avoids CodeQL taint-tracking false positives for clear-text logging).
+  console.info('[Firebase Admin] Initialized successfully.');
   return _app;
 }
 
