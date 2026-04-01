@@ -28,6 +28,9 @@ const APP_DATA_KEY = 'priceMonitorAppData';
 /** @type {string} localStorage key that tracks whether the user dismissed the localStorage disclaimer */
 const DISCLAIMER_KEY = 'priceMonitorDisclaimerDismissed';
 
+/** @type {number} Number of days a product is considered "new" after first discovery */
+const NEW_PRODUCT_DAYS = 7;
+
 /* =========================================================
    ADAPTERS
    ─────────────────────────────────────────────────────────
@@ -67,7 +70,17 @@ const DISCLAIMER_KEY = 'priceMonitorDisclaimerDismissed';
      remove(key)      → void
    ───────────────────────────────────────────────────────── */
 
-// ── ACTIVE: localStorage (no signup, data lives in this browser only) ─────────
+// ── ACTIVE: localStorage (primary) + Firebase Firestore (background sync) ─────
+//
+// This adapter always reads from / writes to localStorage immediately so the UI
+// stays synchronous and snappy. When Firebase is configured and the user is
+// authenticated, every write is also mirrored to Firestore in the background
+// (fire-and-forget). On sign-in, `syncFromFirestore()` fetches the Firestore
+// snapshot and merges it into localStorage, so data is always up-to-date.
+//
+// To use ONLY localStorage (no Firebase) just leave firebase-config.js with
+// the default REPLACE_* placeholder values — the Firebase branches below are
+// never reached when `window.__firestoreDb` is null.
 const storageAdapter = {
   get(key) {
     try { return JSON.parse(localStorage.getItem(key)); } catch (err) {
@@ -79,78 +92,44 @@ const storageAdapter = {
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) {
       console.warn('[storageAdapter] Failed to set value for key', key, err);
     }
+    // Mirror to Firestore in the background (fire-and-forget)
+    if (window.__firestoreDb && _currentUser) {
+      window.__firestoreDb.collection('users').doc(_currentUser.uid)
+        .set({ [key]: value }, { merge: true })
+        .catch((e) => console.warn('[storageAdapter] Firestore sync failed for set:', e));
+    }
   },
   remove(key) {
     try { localStorage.removeItem(key); } catch (_) {}
+    if (window.__firestoreDb && _currentUser) {
+      window.__firestoreDb.collection('users').doc(_currentUser.uid)
+        .update({ [key]: firebase.firestore.FieldValue.delete() })
+        .catch(() => {});
+    }
   },
 };
 
 /*
-// ── OPTION A: Firebase / Firestore ────────────────────────────────────────────
-// HOW TO SWITCH:
-//   1. Go to https://console.firebase.google.com → create a project → add a web app.
-//   2. Enable Firestore Database in the Firebase console.
-//   3. In index.html, add these three scripts BEFORE main.js:
-//        <script src="https://www.gstatic.com/firebasejs/10.x.x/firebase-app-compat.js"></script>
-//        <script src="https://www.gstatic.com/firebasejs/10.x.x/firebase-firestore-compat.js"></script>
-//        <script src="https://www.gstatic.com/firebasejs/10.x.x/firebase-auth-compat.js"></script>
-//   4. Fill in the YOUR_* values below.
-//   5. Change the active line above to:   const storageAdapter = firebaseStorageAdapter;
-//   6. Also uncomment the GOOGLE AUTH block at the bottom of this section.
-//
-// const firebaseApp = firebase.initializeApp({
-//   apiKey:            'YOUR_API_KEY',
-//   authDomain:        'YOUR_PROJECT.firebaseapp.com',
-//   projectId:         'YOUR_PROJECT_ID',
-//   storageBucket:     'YOUR_PROJECT.appspot.com',
-//   messagingSenderId: 'YOUR_SENDER_ID',
-//   appId:             'YOUR_APP_ID',
-// });
-// const firestoreDb = firebase.firestore();
-//
-// const firebaseStorageAdapter = {
-//   async get(key) {
-//     if (!currentUser) return null;
-//     const snap = await firestoreDb.collection('users').doc(currentUser.uid).get();
-//     return snap.exists ? (snap.data()[key] ?? null) : null;
-//   },
-//   async set(key, value) {
-//     if (!currentUser) return;
-//     await firestoreDb.collection('users').doc(currentUser.uid).set({ [key]: value }, { merge: true });
-//   },
-//   async remove(key) {
-//     if (!currentUser) return;
-//     await firestoreDb.collection('users').doc(currentUser.uid)
-//       .update({ [key]: firebase.firestore.FieldValue.delete() });
-//   },
-// };
-*/
-
-/*
-// ── OPTION B: Any REST backend (Node, Python, PHP, etc.) ──────────────────────
+// ── FALLBACK OPTION: Any REST backend (Node, Python, PHP, etc.) ───────────────
 // ⚠️  REQUIRES A BACKEND SERVER — there is no backend today.
 //     Use this only if you add a server (Node/Express, Firebase Cloud Functions, etc.)
-// Works with any server that stores data — MongoDB, PostgreSQL, S3, DynamoDB…
-// HOW TO SWITCH:
-//   1. Create three endpoints on your server:
-//        GET    /api/user-data/:key  → responds with { value: <stored JSON> }
-//        PUT    /api/user-data/:key  → accepts body { value: <JSON> }, responds 200
+//     and want the storageAdapter to hit it instead of Firestore.
+// How to use:
+//   1. Create three endpoints:
+//        GET    /api/user-data/:key  → { value: <stored JSON> }
+//        PUT    /api/user-data/:key  → accepts { value: <JSON> }, responds 200
 //        DELETE /api/user-data/:key  → responds 200
-//   2. If your API requires auth, uncomment the Authorization header lines
-//      and replace YOUR_TOKEN with your auth logic.
-//   3. Change the active line above to:   const storageAdapter = restStorageAdapter;
+//   2. Replace `const storageAdapter = { ... }` above with restStorageAdapter.
 //
 // const restStorageAdapter = {
 //   async get(key) {
 //     const res = await fetch(`/api/user-data/${encodeURIComponent(key)}`);
-//     // { headers: { Authorization: 'Bearer YOUR_TOKEN' } }  ← add if needed
 //     return res.ok ? ((await res.json()).value ?? null) : null;
 //   },
 //   async set(key, value) {
 //     await fetch(`/api/user-data/${encodeURIComponent(key)}`, {
 //       method: 'PUT',
 //       headers: { 'Content-Type': 'application/json' },
-//       // headers: { 'Content-Type': 'application/json', Authorization: 'Bearer YOUR_TOKEN' },
 //       body: JSON.stringify({ value }),
 //     });
 //   },
@@ -174,141 +153,224 @@ const storageAdapter = {
        opts = { toEmail, productName, productUrl, currentPrice, priceAtAddition }
    ───────────────────────────────────────────────────────── */
 
-// ── ACTIVE: disabled stub (button stays disabled, nothing is sent) ─────────────
-// Replace with OPTION A or B below to enable real email notifications.
+// ── ACTIVE: Firebase Firestore price-alert registration ───────────────────────
+//
+// When Firebase is configured, clicking "🔔 Notificarme por correo" stores an
+// alert document in the Firestore `priceAlerts` collection. The GitHub Action
+// at .github/workflows/price-alerts.yml reads these documents every day after
+// the price crawl and sends emails via Nodemailer SMTP.
+//
+// When Firebase is NOT configured (REPLACE_* placeholders still in
+// firebase-config.js), `isAvailable()` returns false and the notify button
+// stays disabled — no errors, no emails, graceful degradation.
 const emailAdapter = {
-  isAvailable() { return false; },
-  async send(opts) {
-    console.warn('[emailAdapter] No email provider configured. ' +
-      'See OPTION A or B below to enable notifications.', opts);
-    return { ok: false, error: 'No email provider configured' };
+  isAvailable() {
+    return !!(window.__firestoreDb && _currentUser);
+  },
+  /**
+   * Registers a price alert in Firestore. The actual email is sent by the
+   * GitHub Action (sendPriceAlerts.js) after the daily price crawl.
+   * @param {Object} opts
+   * @param {string}      opts.toEmail          - Recipient email address.
+   * @param {string}      opts.productName      - Product display name.
+   * @param {string}      opts.productUrl       - Product URL on extremetechcr.com.
+   * @param {number}      opts.currentPrice     - Price at alert creation time.
+   * @param {number|null} opts.priceAtAddition  - Price when product was favourited.
+   * @param {number|null} opts.targetPrice      - Alert only when price drops below this
+   *                                              (null → alert on any price drop).
+   * @param {number}      opts.productId        - Database product ID.
+   * @returns {Promise<{ ok: boolean, error?: string, alertId?: string }>}
+   */
+  async send({ toEmail, productName, productUrl, currentPrice, priceAtAddition, targetPrice, productId }) {
+    if (!window.__firestoreDb || !_currentUser) {
+      return { ok: false, error: 'Firebase no configurado. Ver public/firebase-config.js.' };
+    }
+    try {
+      // Check if an alert already exists for this product + user + email combo
+      const existing = await window.__firestoreDb.collection('priceAlerts')
+        .where('userId', '==', _currentUser.uid)
+        .where('productId', '==', productId)
+        .where('email', '==', toEmail)
+        .where('active', '==', true)
+        .limit(1)
+        .get();
+
+      if (!existing.empty) {
+        // Update the existing alert instead of creating a duplicate
+        const docId = existing.docs[0].id;
+        await existing.docs[0].ref.update({
+          targetPrice: targetPrice || null,
+          notifyOnAnyDrop: !targetPrice,
+          priceAtCreation: currentPrice,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        return { ok: true, alertId: docId, updated: true };
+      }
+
+      const docRef = await window.__firestoreDb.collection('priceAlerts').add({
+        userId:           _currentUser.uid,
+        productId:        productId,
+        productUrl:       productUrl,
+        productName:      productName,
+        targetPrice:      targetPrice || null,
+        notifyOnAnyDrop:  !targetPrice,
+        email:            toEmail,
+        active:           true,
+        priceAtCreation:  currentPrice,
+        priceAtAddition:  priceAtAddition ?? currentPrice,
+        createdAt:        firebase.firestore.FieldValue.serverTimestamp(),
+        lastTriggeredAt:  null,
+      });
+      return { ok: true, alertId: docRef.id };
+    } catch (e) {
+      console.error('[emailAdapter] Firestore write failed:', e);
+      return { ok: false, error: e.message };
+    }
   },
 };
 
-/*
-// ── OPTION A: EmailJS (works from the browser — no server needed) ─────────────
-// Free tier: 200 emails/month. Zero backend required.
-// HOW TO SWITCH:
-//   1. Create a free account at https://www.emailjs.com
-//   2. Add an Email Service (Gmail, Outlook, etc.) and note your Service ID.
-//   3. Create an Email Template using these variable names in the message body:
-//        {{to_email}}  {{product_name}}  {{product_url}}
-//        {{current_price}}  {{price_at_addition}}
-//      Note your Template ID.
-//   4. In Account → API Keys, copy your Public Key.
-//   5. In index.html, add this script BEFORE main.js:
-//        <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-//   6. Fill in the three constants below.
-//   7. Change the active line above to:   const emailAdapter = emailJsAdapter;
-//
-// const EMAILJS_PUBLIC_KEY  = 'YOUR_PUBLIC_KEY';
-// const EMAILJS_SERVICE_ID  = 'YOUR_SERVICE_ID';
-// const EMAILJS_TEMPLATE_ID = 'YOUR_TEMPLATE_ID';
-// emailjs.init(EMAILJS_PUBLIC_KEY);
-//
-// const emailJsAdapter = {
-//   isAvailable() { return true; },
-//   async send({ toEmail, productName, productUrl, currentPrice, priceAtAddition }) {
-//     try {
-//       await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-//         to_email:          toEmail,
-//         product_name:      productName,
-//         product_url:       productUrl,
-//         current_price:     `\u20a1 ${currentPrice.toLocaleString('en-US')}`,
-//         price_at_addition: `\u20a1 ${priceAtAddition.toLocaleString('en-US')}`,
-//       });
-//       return { ok: true };
-//     } catch (err) {
-//       console.error('[emailAdapter] EmailJS send failed:', err);
-//       return { ok: false, error: err.message };
-//     }
-//   },
-// };
-*/
-
-/*
-// ── OPTION B: Custom backend endpoint (Node, Firebase Functions, etc.) ─────────
-// ⚠️  REQUIRES A BACKEND SERVER — there is no backend today.
-//     If you ever add a server, this is ready to wire in.
-// Works with any backend that can send email — SendGrid, Mailgun, AWS SES,
-// Nodemailer, Resend, etc.
-// HOW TO SWITCH:
-//   1. Create a POST endpoint on your server at /api/notify that:
-//        — accepts JSON body: { toEmail, productName, productUrl, currentPrice, priceAtAddition }
-//        — sends the email via your chosen SMTP / email API
-//        — responds with { ok: true } on success or { ok: false, error: '…' } on failure
-//   2. If your endpoint requires auth, uncomment the Authorization header line
-//      and replace YOUR_TOKEN with your auth logic.
-//   3. Change the active line above to:   const emailAdapter = backendEmailAdapter;
-//
-// const backendEmailAdapter = {
-//   isAvailable() { return true; },
-//   async send({ toEmail, productName, productUrl, currentPrice, priceAtAddition }) {
-//     try {
-//       const res = await fetch('/api/notify', {
-//         method: 'POST',
-//         headers: {
-//           'Content-Type': 'application/json',
-//           // Authorization: 'Bearer YOUR_TOKEN',  ← uncomment if your API requires auth
-//         },
-//         body: JSON.stringify({ toEmail, productName, productUrl, currentPrice, priceAtAddition }),
-//       });
-//       const body = await res.json().catch(() => ({}));
-//       return res.ok ? { ok: true } : { ok: false, error: body.error || `HTTP ${res.status}` };
-//     } catch (err) {
-//       console.error('[emailAdapter] Backend request failed:', err);
-//       return { ok: false, error: err.message };
-//     }
-//   },
-// };
-*/
-
 /* ─────────────────────────────────────────────────────────
-   GOOGLE AUTH PLACEHOLDER
-   Lets users sign in so their favourites sync across devices.
-   HOW TO ENABLE:
-     1. Complete storageAdapter OPTION A (Firebase), steps 1–5.
-     2. In the Firebase console → Authentication → Sign-in method → enable Google.
-     3. Uncomment the block below.
-     4. In index.html, uncomment the <button id="authBtn"> in the navbar.
-     5. Add initAuth(); as the very first line inside the init() function.
+   FIREBASE AUTH
+   Automatically signs the user in (anonymously by default).
+   When Firebase is configured, the auth button in the navbar is shown.
+   Users can upgrade to Google sign-in for cross-device sync.
    ───────────────────────────────────────────────────────── */
 
-/*
-// let currentUser = null;
-//
-// function initAuth() {
-//   firebase.auth().onAuthStateChanged((user) => {
-//     currentUser = user;
-//     updateAuthUI(user);
-//   });
-// }
-//
-// function signInWithGoogle() {
-//   firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider())
-//     .catch((err) => console.error('Google sign-in failed:', err));
-// }
-//
-// function signOutUser() {
-//   firebase.auth().signOut();
-// }
-//
-// function updateAuthUI(user) {
-//   const btn = document.getElementById('authBtn');
-//   if (!btn) return;
-//   if (user) {
-//     btn.innerHTML = user.photoURL
-//       ? `<img src="${user.photoURL}" class="auth-avatar" alt="" /> ${escapeHtml(user.displayName || user.email)}`
-//       : escapeHtml(user.displayName || user.email);
-//     btn.title = 'Cerrar sesión';
-//     btn.onclick = signOutUser;
-//   } else {
-//     btn.innerHTML = '\uD83D\uDD11 Entrar con Google';
-//     btn.title = '';
-//     btn.onclick = signInWithGoogle;
-//   }
-// }
-*/
+/** @type {import('firebase/auth').User|null} Currently authenticated Firebase user */
+let _currentUser = null;
+
+/**
+ * Initialises Firebase Authentication.
+ * Called once during app startup when Firebase is configured.
+ * - Signs in anonymously if no session exists.
+ * - On sign-in, pulls Firestore data and merges it into localStorage.
+ * - Shows/hides auth UI elements based on sign-in state.
+ */
+function initAuth() {
+  if (!window.__firebaseAuth) return;
+
+  window.__firebaseAuth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      // No session — sign in anonymously (silent, no UI required)
+      window.__firebaseAuth.signInAnonymously()
+        .catch((e) => console.warn('[Firebase] Anonymous sign-in failed:', e));
+      return;
+    }
+    _currentUser = user;
+    updateAuthUI(user);
+
+    // Pull Firestore data and merge into localStorage so synced data is available
+    await syncFromFirestore();
+
+    // Re-render to reflect any newly synced favourites
+    updateFavoritesFilterLabel();
+    filterAndSort();
+  });
+}
+
+/**
+ * Signs in the user with Google (popup). Merges favourites from Firestore on success.
+ * Falls back gracefully if the browser blocks the popup.
+ */
+function signInWithGoogle() {
+  if (!window.__firebaseAuth) return;
+  window.__firebaseAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider())
+    .catch((err) => {
+      if (err.code !== 'auth/popup-closed-by-user') {
+        console.error('[Firebase] Google sign-in failed:', err);
+      }
+    });
+}
+
+/**
+ * Signs out the current user. Subsequent operations fall back to localStorage.
+ */
+function signOutUser() {
+  if (!window.__firebaseAuth) return;
+  window.__firebaseAuth.signOut().then(() => {
+    _currentUser = null;
+    updateAuthUI(null);
+  });
+}
+
+/**
+ * Updates the auth button in the navbar to reflect the current sign-in state.
+ * Also shows/hides Firebase-only UI elements (alerts button, cloud sync hint).
+ * @param {import('firebase/auth').User|null} user
+ */
+function updateAuthUI(user) {
+  const btn = document.getElementById('authBtn');
+  if (btn) {
+    if (window.__firebaseAuth) btn.classList.remove('d-none');
+    if (user && !user.isAnonymous) {
+      // Use DOM manipulation to safely set button content and avoid XSS via innerHTML
+      btn.textContent = '';  // clear existing children
+      const displayName = user.displayName || user.email || 'Usuario';
+      if (user.photoURL) {
+        // Validate photoURL is an HTTPS URL before using it as an image source
+        const isSafeUrl = /^https:\/\//i.test(user.photoURL);
+        if (isSafeUrl) {
+          const img = document.createElement('img');
+          img.src = user.photoURL;
+          img.className = 'auth-avatar';
+          img.alt = '';
+          img.loading = 'lazy';
+          btn.appendChild(img);
+          btn.appendChild(document.createTextNode(' '));
+        }
+      }
+      btn.appendChild(document.createTextNode(displayName));
+      btn.title = 'Cerrar sesión';
+      btn.onclick = signOutUser;
+    } else {
+      btn.textContent = '🔑 Iniciar sesión';
+      btn.title = 'Iniciar sesión con Google para sincronizar entre dispositivos';
+      btn.onclick = signInWithGoogle;
+    }
+  }
+
+  // Show "Mis alertas" button only when Firebase is available
+  const alertsBtn = document.getElementById('manageAlertsBtn');
+  if (alertsBtn && window.__firestoreDb) alertsBtn.classList.remove('d-none');
+
+  // Show Firebase hint in the disclaimer when Firebase is configured but not signed in
+  const hint = document.getElementById('disclaimerFirebaseHint');
+  if (hint && window.__firebaseAuth) {
+    hint.classList.toggle('d-none', !!(user && !user.isAnonymous));
+  }
+}
+
+/**
+ * Fetches the Firestore user document and merges it into localStorage.
+ * Favorites in Firestore take precedence over local-only ones on the same key,
+ * but local favorites not yet in Firestore are preserved (union merge).
+ * @returns {Promise<void>}
+ */
+async function syncFromFirestore() {
+  if (!window.__firestoreDb || !_currentUser) return;
+  try {
+    const snap = await window.__firestoreDb
+      .collection('users')
+      .doc(_currentUser.uid)
+      .get();
+    if (!snap.exists) return;
+    const cloudData = snap.data();
+    if (cloudData && cloudData[APP_DATA_KEY]) {
+      const local = loadAppData();
+      const cloud = cloudData[APP_DATA_KEY];
+      // Union merge: cloud favourites win over local on same productId key
+      const merged = {
+        version: 1,
+        favorites: { ...local.favorites, ...(cloud.favorites || {}) },
+      };
+      // Write merged data back to localStorage
+      try { localStorage.setItem(APP_DATA_KEY, JSON.stringify(merged)); } catch (_) {}
+      console.info('[Firebase] Synced', Object.keys(merged.favorites).length, 'favourites from Firestore');
+    }
+  } catch (e) {
+    console.warn('[Firebase] syncFromFirestore failed:', e);
+  }
+}
 
 /* =========================================================
    STATE
@@ -334,6 +396,18 @@ let filterOnlyInStock = true;
 
 /** @type {boolean} Whether to show only products the user has added to their favourites */
 let filterOnlyFavorites = false;
+
+/** @type {boolean} Whether to show only products discovered within the last NEW_PRODUCT_DAYS days */
+let filterNewThisWeek = false;
+
+/** @type {string} Active category filter value. Empty string means "all categories". */
+let filterCategory = '';
+
+/** @type {number|null} Minimum price filter (inclusive). Null means no lower limit. */
+let filterPriceMin = null;
+
+/** @type {number|null} Maximum price filter (inclusive). Null means no upper limit. */
+let filterPriceMax = null;
 
 /** @type {Map<number, import('chart.js').Chart>} Mini sparkline chart instances keyed by product ID */
 const miniChartInstances = new Map();
@@ -469,8 +543,8 @@ function updateModalNotifyBtn(productId) {
   const available = emailAdapter.isAvailable();
   btn.disabled = !available;
   btn.title = available
-    ? ''
-    : 'Notificaciones por correo no configuradas. Ver el bloque emailAdapter en main.js para habilitarlas.';
+    ? 'Crear o actualizar una alerta de precio para este producto'
+    : 'Requiere Firebase configurado. Ver public/firebase-config.js.';
   btn.dataset.productId = productId;
 
   // Pre-fill the email input from the saved favourite entry (if any)
@@ -485,16 +559,76 @@ function updateModalNotifyBtn(productId) {
   if (form) form.classList.add('d-none');
   const feedback = document.getElementById('notifyEmailFeedback');
   if (feedback) { feedback.className = 'small mt-1'; feedback.textContent = ''; }
+  const targetInput = document.getElementById('notifyTargetPriceInput');
+  if (targetInput) targetInput.value = '';
+
+  // If Firebase is configured, check if an existing alert exists and show it
+  const existingInfo = document.getElementById('existingAlertInfo');
+  if (existingInfo) existingInfo.classList.add('d-none');
+  if (available && window.__firestoreDb && _currentUser) {
+    loadExistingAlertInfo(productId);
+  }
 }
 
 /**
- * Sends a price-alert email for a favourited product via emailAdapter.
+ * Asynchronously checks Firestore for an existing active alert for the given product
+ * and shows/hides the #existingAlertInfo section inside the notify form.
+ * @param {number} productId
+ */
+async function loadExistingAlertInfo(productId) {
+  if (!window.__firestoreDb || !_currentUser) return;
+  try {
+    const snap = await window.__firestoreDb.collection('priceAlerts')
+      .where('userId', '==', _currentUser.uid)
+      .where('productId', '==', productId)
+      .where('active', '==', true)
+      .limit(1)
+      .get();
+    const infoEl = document.getElementById('existingAlertInfo');
+    const textEl = document.getElementById('existingAlertText');
+    const deleteBtn = document.getElementById('deleteAlertBtn');
+    if (!infoEl) return;
+    if (snap.empty) {
+      infoEl.classList.add('d-none');
+      return;
+    }
+    const alert = snap.docs[0].data();
+    const alertDocId = snap.docs[0].id;
+    const targetText = alert.targetPrice
+      ? `objetivo: ${CRC_SYMBOL} ${formatNumber(alert.targetPrice)}`
+      : 'cualquier bajada';
+    if (textEl) textEl.textContent = `✓ Alerta activa para ${alert.email} (${targetText})`;
+    infoEl.classList.remove('d-none');
+    if (deleteBtn) {
+      deleteBtn.onclick = async () => {
+        deleteBtn.disabled = true;
+        try {
+          await snap.docs[0].ref.update({ active: false });
+          infoEl.classList.add('d-none');
+        } catch (e) {
+          deleteBtn.disabled = false;
+        }
+      };
+    }
+    // Pre-fill form with existing values
+    const emailInput = document.getElementById('notifyEmailInput');
+    const targetInput = document.getElementById('notifyTargetPriceInput');
+    if (emailInput && !emailInput.value) emailInput.value = alert.email || '';
+    if (targetInput && alert.targetPrice) targetInput.value = alert.targetPrice;
+  } catch (e) {
+    console.warn('[loadExistingAlertInfo] Firestore query failed:', e);
+  }
+}
+
+/**
+ * Registers a price alert via emailAdapter (Firestore) for a product.
  * Persists the email address in the favourite entry so it is pre-filled next time.
  * @param {number} productId - Database ID of the product.
  * @param {string} email - Recipient email address.
+ * @param {number|null} targetPrice - Alert when price drops below this, or null for any drop.
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
-async function sendPriceAlert(productId, email) {
+async function sendPriceAlert(productId, email, targetPrice) {
   const product = allProducts.find((p) => p.id === productId);
   if (!product) return { ok: false, error: 'Producto no encontrado' };
 
@@ -507,11 +641,13 @@ async function sendPriceAlert(productId, email) {
   }
 
   return emailAdapter.send({
-    toEmail: email,
-    productName: product.name || UNKNOWN_PRODUCT_NAME,
-    productUrl: product.url,
-    currentPrice: product.price,
+    toEmail:         email,
+    productName:     product.name || UNKNOWN_PRODUCT_NAME,
+    productUrl:      product.url,
+    currentPrice:    product.price,
     priceAtAddition: (data.favorites[String(productId)] || {}).priceAtAddition ?? product.price,
+    targetPrice:     targetPrice || null,
+    productId:       productId,
   });
 }
 
@@ -527,12 +663,15 @@ async function init() {
   try {
     initTheme();
     initDisclaimer();
+    initAuth();               // Firebase auth (no-op when Firebase is not configured)
     updateFavoritesFilterLabel();
     setStatus('Cargando base de datos...');
     const SQL = await initSqlJs({ locateFile: () => SQL_WASM_URL });
     const dbBuffer = await loadDatabaseFromZip();
     sqlDb = new SQL.Database(new Uint8Array(dbBuffer));
     allProducts = queryAllProducts();
+    populateCategoryDropdown();   // Fill the category <select> from the loaded DB
+    checkSharedFavoritesInUrl();  // Offer to import favorites from ?share= URL param
     renderProducts(filterProducts(allProducts));
     setStatus(`Base de datos cargada. Última actualización: ${getLastUpdated()}`);
     setupEventListeners();
@@ -772,6 +911,11 @@ function filterProducts(products) {
 
   const favorites = filterOnlyFavorites ? getFavorites() : null;
 
+  // "New this week" cutoff date
+  const newCutoff = filterNewThisWeek
+    ? new Date(Date.now() - NEW_PRODUCT_DAYS * 24 * 60 * 60 * 1000)
+    : null;
+
   return products.filter((p) => {
     // Favourites filter: hide products not in the user's favourites list
     if (favorites && !favorites[String(p.id)]) return false;
@@ -782,6 +926,23 @@ function filterProducts(products) {
     // Stock filter (only applied to active products; inactive ones are shown regardless of stock)
     if (p.isActive === 1 && filterOnlyInStock) {
       if (!isProductInStock(p.stockLocations)) return false;
+    }
+
+    // Category filter
+    if (filterCategory) {
+      if ((p.category || '').toLowerCase() !== filterCategory.toLowerCase()) return false;
+    }
+
+    // Price range filter
+    if (filterPriceMin !== null && (p.price == null || p.price < filterPriceMin)) return false;
+    if (filterPriceMax !== null && (p.price == null || p.price > filterPriceMax)) return false;
+
+    // "New this week" filter — only show products first scraped within the last N days
+    if (newCutoff) {
+      const scrapedAt = p.publishedDateFirstScrapedAt
+        ? new Date(p.publishedDateFirstScrapedAt)
+        : null;
+      if (!scrapedAt || scrapedAt < newCutoff) return false;
     }
 
     // Search filter: name, URL, or SKU
@@ -838,6 +999,222 @@ function sortProducts(products, sortKey) {
     }
   });
   return sorted;
+}
+
+/* =========================================================
+   CATEGORY DROPDOWN
+   ========================================================= */
+
+/**
+ * Queries all distinct non-null categories from the products table,
+ * sorted alphabetically, and populates the #categorySelect dropdown.
+ * Only called once after the DB is loaded.
+ */
+function populateCategoryDropdown() {
+  const select = document.getElementById('categorySelect');
+  if (!select || !sqlDb) return;
+  try {
+    const result = sqlDb.exec(`
+      SELECT DISTINCT category
+      FROM products
+      WHERE category IS NOT NULL AND category != ''
+      ORDER BY category ASC
+    `);
+    if (!result.length) return;
+    result[0].values.forEach(([cat]) => {
+      const option = document.createElement('option');
+      option.value = cat;
+      option.textContent = cat;
+      select.appendChild(option);
+    });
+  } catch (e) {
+    console.warn('[populateCategoryDropdown] Query failed:', e);
+  }
+}
+
+/* =========================================================
+   SHARE FAVORITES
+   ========================================================= */
+
+/**
+ * Generates and displays a shareable URL encoding the user's current favourites.
+ * The URL uses a `?share=` query parameter containing base64-encoded product IDs.
+ * Opens the Share modal.
+ */
+function openShareModal() {
+  const favorites = getFavorites();
+  const ids = Object.keys(favorites).map(Number).filter(Boolean);
+
+  const shareSection = document.getElementById('shareUrlSection');
+  const emptyState   = document.getElementById('shareEmptyState');
+  const urlInput     = document.getElementById('shareUrlInput');
+  const feedback     = document.getElementById('copyShareUrlFeedback');
+
+  if (feedback) feedback.classList.add('d-none');
+
+  if (ids.length === 0) {
+    if (emptyState)   emptyState.classList.remove('d-none');
+    if (shareSection) shareSection.classList.add('d-none');
+  } else {
+    if (emptyState)   emptyState.classList.add('d-none');
+    if (shareSection) shareSection.classList.remove('d-none');
+    const encoded = btoa(ids.join(','));
+    const url = `${location.origin}${location.pathname}?share=${encodeURIComponent(encoded)}`;
+    if (urlInput) urlInput.value = url;
+  }
+
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('shareModal'));
+  modal.show();
+}
+
+/**
+ * Checks if the page was opened with a `?share=` query parameter.
+ * If so, decodes the product IDs and offers to import them via the import modal.
+ */
+function checkSharedFavoritesInUrl() {
+  const params = new URLSearchParams(location.search);
+  const shareParam = params.get('share');
+  if (!shareParam) return;
+
+  try {
+    const decoded = atob(decodeURIComponent(shareParam));
+    const ids = decoded.split(',').map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    if (ids.length === 0) return;
+
+    const countEl = document.getElementById('importFavoritesCount');
+    if (countEl) countEl.textContent = `${ids.length} producto${ids.length !== 1 ? 's' : ''} para importar.`;
+
+    const importConfirm = document.getElementById('importFavoritesConfirm');
+    if (importConfirm) {
+      importConfirm.onclick = () => {
+        importSharedFavorites(ids);
+        const modal = bootstrap.Modal.getInstance(document.getElementById('importFavoritesModal'));
+        if (modal) modal.hide();
+        // Remove the ?share= param from the URL without reloading
+        history.replaceState(null, '', location.pathname);
+        filterAndSort();
+        updateFavoritesFilterLabel();
+      };
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('importFavoritesModal'));
+    modal.show();
+  } catch (e) {
+    console.warn('[checkSharedFavoritesInUrl] Could not decode share param:', e);
+  }
+}
+
+/**
+ * Imports an array of product IDs into the user's favourites list.
+ * Products already in favourites are skipped. Products not found in allProducts are skipped.
+ * @param {number[]} ids - Array of product database IDs to import.
+ */
+function importSharedFavorites(ids) {
+  ids.forEach((id) => {
+    if (isFavorite(id)) return;
+    const product = allProducts.find((p) => p.id === id);
+    if (product) addFavorite(product);
+  });
+}
+
+/* =========================================================
+   PRICE ALERTS MANAGEMENT
+   ========================================================= */
+
+/**
+ * Opens the Alerts modal and loads active Firestore alerts for the current user.
+ * No-op when Firebase is not configured.
+ */
+async function openAlertsModal() {
+  if (!window.__firestoreDb || !_currentUser) return;
+
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('alertsModal'));
+  modal.show();
+
+  const spinner   = document.getElementById('alertsLoadingSpinner');
+  const emptyEl   = document.getElementById('alertsEmptyState');
+  const listEl    = document.getElementById('alertsList');
+  const tbodyEl   = document.getElementById('alertsTableBody');
+
+  if (spinner)  spinner.classList.remove('d-none');
+  if (emptyEl)  emptyEl.classList.add('d-none');
+  if (listEl)   listEl.classList.add('d-none');
+  if (tbodyEl)  tbodyEl.innerHTML = '';
+
+  try {
+    const snap = await window.__firestoreDb.collection('priceAlerts')
+      .where('userId', '==', _currentUser.uid)
+      .where('active', '==', true)
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    if (spinner) spinner.classList.add('d-none');
+
+    if (snap.empty) {
+      if (emptyEl) emptyEl.classList.remove('d-none');
+      return;
+    }
+
+    if (listEl)  listEl.classList.remove('d-none');
+    snap.forEach((doc) => {
+      const a = doc.data();
+      const row = document.createElement('tr');
+
+      const targetText = a.targetPrice
+        ? `${CRC_SYMBOL} ${formatNumber(a.targetPrice)}`
+        : 'cualquier bajada';
+      const addedPrice = a.priceAtCreation
+        ? `${CRC_SYMBOL} ${formatNumber(a.priceAtCreation)}`
+        : '—';
+      const lastTriggered = a.lastTriggeredAt
+        ? new Date(
+            typeof a.lastTriggeredAt.toDate === 'function'
+              ? a.lastTriggeredAt.toDate()
+              : a.lastTriggeredAt
+          ).toLocaleDateString('es-CR')
+        : 'Nunca';
+
+      row.innerHTML = `
+        <td class="small">
+          <a href="${escapeHtml(a.productUrl)}" target="_blank" rel="noopener"
+             class="text-truncate d-block" style="max-width:200px;"
+             title="${escapeHtml(a.productName)}">${escapeHtml(a.productName)}</a>
+        </td>
+        <td class="small">${escapeHtml(addedPrice)}</td>
+        <td class="small">${escapeHtml(targetText)}</td>
+        <td class="small text-truncate" style="max-width:140px;">${escapeHtml(a.email)}</td>
+        <td class="small">${escapeHtml(lastTriggered)}</td>
+        <td>
+          <button class="btn btn-sm btn-outline-danger delete-alert-btn"
+                  data-alert-id="${escapeHtml(doc.id)}"
+                  aria-label="Eliminar alerta">🗑️</button>
+        </td>`;
+
+      if (tbodyEl) tbodyEl.appendChild(row);
+    });
+
+    // Wire up delete buttons
+    tbodyEl && tbodyEl.querySelectorAll('.delete-alert-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const alertId = btn.dataset.alertId;
+        btn.disabled = true;
+        try {
+          await window.__firestoreDb.collection('priceAlerts').doc(alertId).update({ active: false });
+          btn.closest('tr').remove();
+          if (tbodyEl.rows.length === 0) {
+            listEl && listEl.classList.add('d-none');
+            emptyEl && emptyEl.classList.remove('d-none');
+          }
+        } catch (e) {
+          btn.disabled = false;
+          console.error('[openAlertsModal] Delete alert failed:', e);
+        }
+      });
+    });
+  } catch (e) {
+    if (spinner) spinner.classList.add('d-none');
+    console.error('[openAlertsModal] Firestore query failed:', e);
+  }
 }
 
 /* =========================================================
@@ -1036,13 +1413,24 @@ function buildPublishedDateHtml(product) {
  * @returns {string} HTML snippet with status badges, or empty string.
  */
 function buildStatusBadges(product) {
+  const badges = [];
+
   if (product.isActive === 0) {
-    return '<div class="mb-1"><span class="badge bg-secondary">Ya no disponible</span></div>';
+    badges.push('<span class="badge bg-secondary">Ya no disponible</span>');
+  } else if (!isProductInStock(product.stockLocations)) {
+    badges.push('<span class="badge bg-warning text-dark">Sin stock</span>');
   }
-  if (!isProductInStock(product.stockLocations)) {
-    return '<div class="mb-1"><span class="badge bg-warning text-dark">Sin stock</span></div>';
+
+  // "New" badge: product first scraped within the last NEW_PRODUCT_DAYS days
+  if (product.publishedDateFirstScrapedAt) {
+    const scraped = new Date(product.publishedDateFirstScrapedAt);
+    const cutoff = new Date(Date.now() - NEW_PRODUCT_DAYS * 24 * 60 * 60 * 1000);
+    if (scraped >= cutoff) {
+      badges.push('<span class="badge bg-info text-dark new-product-badge">🆕 Nuevo</span>');
+    }
   }
-  return '';
+
+  return badges.length ? `<div class="mb-1">${badges.join(' ')}</div>` : '';
 }
 
 /**
@@ -1429,8 +1817,12 @@ function setupEventListeners() {
     notifySubmit.addEventListener('click', async () => {
       const productId = parseInt(document.getElementById('modalNotifyBtn').dataset.productId, 10);
       const emailInput = document.getElementById('notifyEmailInput');
+      const targetInput = document.getElementById('notifyTargetPriceInput');
       const feedback = document.getElementById('notifyEmailFeedback');
       const email = emailInput ? emailInput.value.trim() : '';
+      const targetPrice = targetInput && targetInput.value.trim()
+        ? parseFloat(targetInput.value.trim())
+        : null;
 
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         if (feedback) {
@@ -1440,24 +1832,36 @@ function setupEventListeners() {
         return;
       }
 
+      if (targetPrice !== null && (isNaN(targetPrice) || targetPrice <= 0)) {
+        if (feedback) {
+          feedback.className = 'small mt-1 text-danger';
+          feedback.textContent = 'El precio objetivo debe ser un número mayor a 0.';
+        }
+        return;
+      }
+
       if (feedback) {
         feedback.className = 'small mt-1 text-muted';
-        feedback.textContent = 'Enviando…';
+        feedback.textContent = 'Guardando alerta…';
       }
       notifySubmit.disabled = true;
 
-      const result = await sendPriceAlert(productId, email);
+      const result = await sendPriceAlert(productId, email, targetPrice);
 
       notifySubmit.disabled = false;
       if (result.ok) {
         if (feedback) {
           feedback.className = 'small mt-1 text-success';
-          feedback.textContent = '✓ Notificación enviada correctamente.';
+          feedback.textContent = result.updated
+            ? '✓ Alerta actualizada correctamente.'
+            : '✓ Alerta guardada. Recibirás un correo cuando el precio cambie.';
         }
+        // Refresh existing alert info
+        loadExistingAlertInfo(productId);
       } else {
         if (feedback) {
           feedback.className = 'small mt-1 text-danger';
-          feedback.textContent = `Error al enviar: ${result.error}`;
+          feedback.textContent = `Error al guardar: ${result.error}`;
         }
       }
     });
@@ -1471,6 +1875,87 @@ function setupEventListeners() {
       const banner = document.getElementById('localStorageDisclaimer');
       if (banner) banner.classList.add('d-none');
     });
+  }
+
+  // Category filter
+  const categorySelect = document.getElementById('categorySelect');
+  if (categorySelect) {
+    categorySelect.addEventListener('change', (e) => {
+      filterCategory = e.target.value;
+      filterAndSort();
+    });
+  }
+
+  // Price range filter — min
+  const priceMinInput = document.getElementById('priceMinInput');
+  const priceMaxInput = document.getElementById('priceMaxInput');
+  const clearPriceRangeBtn = document.getElementById('clearPriceRangeBtn');
+
+  function updatePriceRangeFilter() {
+    filterPriceMin = priceMinInput && priceMinInput.value.trim() !== ''
+      ? parseFloat(priceMinInput.value) : null;
+    filterPriceMax = priceMaxInput && priceMaxInput.value.trim() !== ''
+      ? parseFloat(priceMaxInput.value) : null;
+    const isActive = filterPriceMin !== null || filterPriceMax !== null;
+    if (clearPriceRangeBtn) clearPriceRangeBtn.classList.toggle('d-none', !isActive);
+    filterAndSort();
+  }
+
+  if (priceMinInput) priceMinInput.addEventListener('change', updatePriceRangeFilter);
+  if (priceMaxInput) priceMaxInput.addEventListener('change', updatePriceRangeFilter);
+  if (clearPriceRangeBtn) {
+    clearPriceRangeBtn.addEventListener('click', () => {
+      if (priceMinInput) priceMinInput.value = '';
+      if (priceMaxInput) priceMaxInput.value = '';
+      filterPriceMin = null;
+      filterPriceMax = null;
+      clearPriceRangeBtn.classList.add('d-none');
+      filterAndSort();
+    });
+  }
+
+  // "New this week" filter toggle
+  const newWeekBtn = document.getElementById('filterNewThisWeekBtn');
+  if (newWeekBtn) {
+    newWeekBtn.addEventListener('click', () => {
+      filterNewThisWeek = !filterNewThisWeek;
+      newWeekBtn.classList.toggle('active', filterNewThisWeek);
+      filterAndSort();
+    });
+  }
+
+  // Share favorites button
+  const shareFavBtn = document.getElementById('shareFavoritesBtn');
+  if (shareFavBtn) {
+    shareFavBtn.addEventListener('click', openShareModal);
+  }
+
+  // Copy share URL button
+  const copyShareBtn = document.getElementById('copyShareUrlBtn');
+  if (copyShareBtn) {
+    copyShareBtn.addEventListener('click', () => {
+      const urlInput = document.getElementById('shareUrlInput');
+      if (urlInput) {
+        navigator.clipboard.writeText(urlInput.value).then(() => {
+          const feedback = document.getElementById('copyShareUrlFeedback');
+          if (feedback) {
+            feedback.classList.remove('d-none');
+            setTimeout(() => feedback.classList.add('d-none'), 3000);
+          }
+        }).catch(() => {
+          try {
+            urlInput.select();
+            document.execCommand('copy');
+          } catch (_) {}
+        });
+      }
+    });
+  }
+
+  // Manage alerts button (shown only when Firebase is configured)
+  const manageAlertsBtn = document.getElementById('manageAlertsBtn');
+  if (manageAlertsBtn) {
+    manageAlertsBtn.addEventListener('click', openAlertsModal);
   }
 }
 

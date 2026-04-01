@@ -231,3 +231,81 @@ body {
   background-color: #2b2f38;
   border-color: rgba(255, 255, 255, 0.15) !important;
 }
+
+/* =========================================================
+   AUTH AVATAR
+   Small circular photo shown next to the user's name in the navbar
+   when signed in with Google.
+   ========================================================= */
+
+.auth-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+/* =========================================================
+   NEW PRODUCT BADGE
+   Shown on cards for products discovered within the last 7 days.
+   ========================================================= */
+
+.new-product-badge {
+  font-size: 0.7rem;
+  vertical-align: middle;
+}
+
+/* =========================================================
+   "NEW THIS WEEK" FILTER BUTTON — active state
+   ========================================================= */
+
+.new-week-filter-btn.active {
+  background-color: #0dcaf0;
+  border-color: #0dcaf0;
+  color: #000;
+}
+
+/* =========================================================
+   EXISTING ALERT INFO — shown inside the notify form
+   when an active Firestore alert already exists for the product.
+   ========================================================= */
+
+.existing-alert-info {
+  background-color: #d1e7dd;
+  border-color: #badbcc !important;
+  font-size: 0.8rem;
+}
+
+[data-bs-theme="dark"] .existing-alert-info {
+  background-color: rgba(25, 135, 84, 0.2);
+  border-color: rgba(25, 135, 84, 0.4) !important;
+  color: #75b798;
+}
+
+/* =========================================================
+   PRICE RANGE FILTER — compact inline inputs in the filter bar
+   ========================================================= */
+
+#priceMinInput,
+#priceMaxInput {
+  min-width: 80px;
+}
+
+/* =========================================================
+   ALERTS MODAL TABLE — prevent long product names from breaking layout
+   ========================================================= */
+
+#alertsTableBody td {
+  vertical-align: middle;
+}
+
+/* =========================================================
+   SHARE URL INPUT — monospace so the URL is easier to read
+   ========================================================= */
+
+#shareUrlInput {
+  font-size: 0.78rem;
+}
+
