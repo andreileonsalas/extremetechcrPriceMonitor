@@ -858,7 +858,7 @@ function fieldTokenScore(queryToken, dataTokens) {
 const SYNONYMS = {
   ram: ['memoria'],
   memoria: ['ram'],
-  ssd: ['solido', 'solid'],
+  ssd: ['solido', 'solid', 'nvme'],
   nvme: ['ssd', 'm2'],
   hdd: ['disco', 'duro'],
   disco: ['hdd'],
@@ -866,11 +866,15 @@ const SYNONYMS = {
   cpu: ['procesador'],
   procesador: ['cpu'],
   monitor: ['pantalla', 'display'],
+  pantalla: ['monitor', 'display'],
+  display: ['monitor', 'pantalla'],
   teclado: ['keyboard'],
+  keyboard: ['teclado'],
   mouse: ['raton'],
   raton: ['mouse'],
   laptop: ['portatil', 'notebook'],
   portatil: ['laptop', 'notebook'],
+  notebook: ['laptop', 'portatil'],
 };
 
 /**
