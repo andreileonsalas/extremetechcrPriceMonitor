@@ -759,17 +759,36 @@ function calcPriceChangePct(product) {
   return (product.price - product.prevPrice) / product.prevPrice * 100;
 }
 
+/* =========================================================
+   SEARCH HELPERS  (see public/search.js — loaded before this script)
+   All pure search functions (normalizeText, tokenize, levenshtein,
+   tokenMatchScore, fieldTokenScore, expandToken, computeSearchScore,
+   SYNONYMS, SEARCH_FIELD_WEIGHTS) are defined there as browser globals.
+   ========================================================= */
+
+/** Maps product id → relevance score for the most recent search query. */
+let productSearchScores = new Map();
+
+/* =========================================================
+   FILTERING
+   ========================================================= */
+
 /**
  * Applies the current filter state (active/inactive, in-stock/out-of-stock, search term)
  * and returns the matching subset of allProducts.
+ * When a search term is active, relevance scores are stored in productSearchScores
+ * (keyed by product id) so that filterAndSort can order results without mutating
+ * the original product objects.
  * @param {Array<Object>} products - Full product list to filter.
  * @returns {Array<Object>} Filtered products.
  */
 function filterProducts(products) {
-  const searchTerm = document.getElementById('searchInput')
-    ? document.getElementById('searchInput').value.toLowerCase().trim()
+  const rawSearch = document.getElementById('searchInput')
+    ? document.getElementById('searchInput').value.trim()
     : '';
+  const queryTokens = tokenize(rawSearch);
 
+  productSearchScores = new Map();
   const favorites = filterOnlyFavorites ? getFavorites() : null;
 
   return products.filter((p) => {
@@ -784,14 +803,11 @@ function filterProducts(products) {
       if (!isProductInStock(p.stockLocations)) return false;
     }
 
-    // Search filter: name, URL, or SKU
-    if (searchTerm) {
-      const name = (p.name || '').toLowerCase();
-      const url = (p.url || '').toLowerCase();
-      const sku = (p.sku || '').toLowerCase();
-      if (!name.includes(searchTerm) && !url.includes(searchTerm) && !sku.includes(searchTerm)) {
-        return false;
-      }
+    // Search filter: tokenized, normalized, multi-field, scored
+    if (queryTokens.length > 0) {
+      const score = computeSearchScore(p, queryTokens);
+      if (score === 0) return false;
+      productSearchScores.set(p.id, score);
     }
 
     return true;
@@ -801,11 +817,21 @@ function filterProducts(products) {
 /**
  * Filters and sorts the product list based on the current search term, sort selection,
  * and checkbox filter state, then re-renders the product grid.
+ * When a search term is active, results are ordered by relevance score (descending).
+ * Otherwise the user-selected sort order is applied.
  */
 function filterAndSort() {
   const sortValue = document.getElementById('sortSelect').value;
-  const filtered = sortProducts(filterProducts(allProducts), sortValue);
-  renderProducts(filtered);
+  const hasSearch = document.getElementById('searchInput')
+    && document.getElementById('searchInput').value.trim().length > 0;
+  const filtered = filterProducts(allProducts);
+  let sorted;
+  if (hasSearch) {
+    sorted = [...filtered].sort((a, b) => (productSearchScores.get(b.id) || 0) - (productSearchScores.get(a.id) || 0));
+  } else {
+    sorted = sortProducts(filtered, sortValue);
+  }
+  renderProducts(sorted);
 }
 
 /**
@@ -1338,7 +1364,7 @@ function setupEventListeners() {
   let searchTimeout;
   document.getElementById('searchInput').addEventListener('input', () => {
     clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(filterAndSort, 300);
+    searchTimeout = setTimeout(filterAndSort, 250);
   });
 
   document.getElementById('sortSelect').addEventListener('change', filterAndSort);
