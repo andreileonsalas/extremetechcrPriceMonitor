@@ -809,9 +809,16 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+/** Minimum token length required to apply fuzzy (Levenshtein) matching. */
+const FUZZY_MIN_TOKEN_LENGTH = 5;
+
+/** Maximum allowed edit distance when fuzzy-matching two tokens. */
+const FUZZY_MAX_EDIT_DISTANCE = 1;
+
 /**
  * Scores a query token against a single data token.
- * Returns 2 for exact/substring match, 1 for fuzzy match (edit distance ≤ 1 on tokens > 4 chars), 0 otherwise.
+ * Returns 2 for exact/substring match, 1 for fuzzy match (edit distance ≤ FUZZY_MAX_EDIT_DISTANCE
+ * on tokens longer than FUZZY_MIN_TOKEN_LENGTH chars), 0 otherwise.
  * @param {string} queryToken
  * @param {string} dataToken
  * @returns {number}
@@ -819,8 +826,11 @@ function levenshtein(a, b) {
 function tokenMatchScore(queryToken, dataToken) {
   if (queryToken === dataToken) return 2;
   if (dataToken.includes(queryToken)) return 2;
-  if (queryToken.length > 4 && Math.abs(queryToken.length - dataToken.length) <= 1) {
-    if (levenshtein(queryToken, dataToken) <= 1) return 1;
+  if (
+    queryToken.length >= FUZZY_MIN_TOKEN_LENGTH &&
+    Math.abs(queryToken.length - dataToken.length) <= FUZZY_MAX_EDIT_DISTANCE
+  ) {
+    if (levenshtein(queryToken, dataToken) <= FUZZY_MAX_EDIT_DISTANCE) return 1;
   }
   return 0;
 }
@@ -851,7 +861,7 @@ const SYNONYMS = {
   ssd: ['solido', 'solid'],
   nvme: ['ssd', 'm2'],
   hdd: ['disco', 'duro'],
-  disco: ['hdd', 'ssd'],
+  disco: ['hdd'],
   gpu: ['grafica', 'video', 'tarjeta'],
   cpu: ['procesador'],
   procesador: ['cpu'],
@@ -917,6 +927,9 @@ function computeSearchScore(product, queryTokens) {
   return totalScore;
 }
 
+/** Maps product id → relevance score for the most recent search query. */
+let productSearchScores = new Map();
+
 /* =========================================================
    FILTERING
    ========================================================= */
@@ -924,7 +937,9 @@ function computeSearchScore(product, queryTokens) {
 /**
  * Applies the current filter state (active/inactive, in-stock/out-of-stock, search term)
  * and returns the matching subset of allProducts.
- * Each returned product gains a `_score` property (0 when no search term is active).
+ * When a search term is active, relevance scores are stored in productSearchScores
+ * (keyed by product id) so that filterAndSort can order results without mutating
+ * the original product objects.
  * @param {Array<Object>} products - Full product list to filter.
  * @returns {Array<Object>} Filtered products.
  */
@@ -934,6 +949,7 @@ function filterProducts(products) {
     : '';
   const queryTokens = tokenize(rawSearch);
 
+  productSearchScores = new Map();
   const favorites = filterOnlyFavorites ? getFavorites() : null;
 
   return products.filter((p) => {
@@ -952,9 +968,7 @@ function filterProducts(products) {
     if (queryTokens.length > 0) {
       const score = computeSearchScore(p, queryTokens);
       if (score === 0) return false;
-      p._score = score;
-    } else {
-      p._score = 0;
+      productSearchScores.set(p.id, score);
     }
 
     return true;
@@ -974,7 +988,7 @@ function filterAndSort() {
   const filtered = filterProducts(allProducts);
   let sorted;
   if (hasSearch) {
-    sorted = [...filtered].sort((a, b) => (b._score || 0) - (a._score || 0));
+    sorted = [...filtered].sort((a, b) => (productSearchScores.get(b.id) || 0) - (productSearchScores.get(a.id) || 0));
   } else {
     sorted = sortProducts(filtered, sortValue);
   }
