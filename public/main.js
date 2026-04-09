@@ -648,7 +648,7 @@ function applyColsPerRow() {
 function queryAllProducts() {
   const result = sqlDb.exec(`
     SELECT p.id, p.url, p.name, p.sku, p.category, p.imageUrl, p.lastCheckedAt,
-           p.stockLocations, p.isActive, ph.price, ph.originalPrice, ph.currency,
+           p.firstSeenAt, p.stockLocations, p.isActive, ph.price, ph.originalPrice, ph.currency,
            p.publishedDateFirst, p.publishedDateLatest,
            p.publishedDateFirstScrapedAt, p.publishedDateLatestScrapedAt,
            (
@@ -957,6 +957,7 @@ function buildProductCardHtml(product) {
   const favoriteLabel = favorited ? 'Quitar de favoritos' : 'Agregar a favoritos';
   const priceSinceFavoriteHtml = buildPriceSinceFavoriteHtml(product);
   const publishedDateHtml = buildPublishedDateHtml(product);
+  const crawlDatesHtml = buildCrawlDatesHtml(product);
 
   return `
     <div class="card h-100 product-card${favoriteClass}"
@@ -977,6 +978,7 @@ function buildProductCardHtml(product) {
         ${priceSinceFavoriteHtml}
         ${stockHtml}
         ${publishedDateHtml}
+        ${crawlDatesHtml}
       </div>
       <div class="card-footer text-muted small">
         <a href="${escapeHtml(product.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver en ExtremeTechCR</a>
@@ -1052,6 +1054,42 @@ function buildPublishedDateHtml(product) {
     <span title="${escapeHtml(firstTitle)}">📅 Publicado: ${escapeHtml(fmtDate(first))}</span>
     <span class="ms-1 text-warning" title="${escapeHtml(latestTitle)}">(actualizado: ${escapeHtml(fmtDate(latest))})</span>
   </div>`;
+}
+
+/**
+ * Builds the crawl-date subtitle for a product card.
+ * Shows "Visto por primera vez" (firstSeenAt) and "Último chequeo" (lastCheckedAt)
+ * as small text. Both dates are shown as tooltips with the full ISO timestamp.
+ * @param {Object} product - Product row with firstSeenAt and lastCheckedAt fields.
+ * @returns {string} HTML snippet or empty string when no dates are available.
+ */
+function buildCrawlDatesHtml(product) {
+  const fmtShort = (iso) => {
+    if (!iso) return null;
+    return new Date(iso).toLocaleDateString('es-CR', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  const fmtFull = (iso) => {
+    if (!iso) return null;
+    return new Date(iso).toLocaleString('es-CR', { dateStyle: 'medium', timeStyle: 'short' });
+  };
+
+  const first = product.firstSeenAt ? fmtShort(product.firstSeenAt) : null;
+  const last = product.lastCheckedAt ? fmtShort(product.lastCheckedAt) : null;
+
+  if (!first && !last) return '';
+
+  const firstTitle = product.firstSeenAt ? `Detectado el ${fmtFull(product.firstSeenAt)}` : '';
+  const lastTitle = product.lastCheckedAt ? `Chequeado el ${fmtFull(product.lastCheckedAt)}` : '';
+
+  const firstPart = first
+    ? `<span title="${escapeHtml(firstTitle)}">🔍 Detectado: ${escapeHtml(first)}</span>`
+    : '';
+  const sep = first && last ? ' · ' : '';
+  const lastPart = last
+    ? `<span title="${escapeHtml(lastTitle)}">🕐 Chequeado: ${escapeHtml(last)}</span>`
+    : '';
+
+  return `<div class="product-crawl-dates text-muted small mt-1">${firstPart}${sep}${lastPart}</div>`;
 }
 
 /**
