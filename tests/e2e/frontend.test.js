@@ -36,7 +36,11 @@ function createTestDatabase() {
       stockLocations TEXT,
       firstSeenAt TEXT NOT NULL,
       lastCheckedAt TEXT NOT NULL,
-      isActive INTEGER DEFAULT 1
+      isActive INTEGER DEFAULT 1,
+      publishedDateFirst TEXT,
+      publishedDateLatest TEXT,
+      publishedDateFirstScrapedAt TEXT,
+      publishedDateLatestScrapedAt TEXT
     );
 
     CREATE TABLE IF NOT EXISTS priceHistory (
@@ -124,7 +128,7 @@ function createTestDatabase() {
       prevPrice: 800000,
       originalPrice: null,
       isActive: 1,
-      stockLocations: null,
+      stockLocations: JSON.stringify([{ location: 'San Jose Centro', quantity: 1 }]),
     },
     {
       url: 'https://extremetechcr.com/producto/mouse-logitech-g502',
@@ -135,7 +139,7 @@ function createTestDatabase() {
       prevPrice: null,
       originalPrice: null,
       isActive: 1,
-      stockLocations: null,
+      stockLocations: JSON.stringify([{ location: 'Alajuela', quantity: 2 }]),
     },
     {
       url: 'https://extremetechcr.com/producto/memoria-ram-para-pc-8gb-2400mhz-oem/',

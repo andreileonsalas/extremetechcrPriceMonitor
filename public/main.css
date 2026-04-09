@@ -62,6 +62,15 @@ body {
   cursor: default;
 }
 
+/* First-seen / last-checked crawl dates shown on product cards */
+.product-crawl-dates {
+  font-size: 0.72rem;
+}
+
+.product-crawl-dates span {
+  cursor: default;
+}
+
 /* ⭐ Mis favoritos filter button — active state */
 .favorites-filter-btn.active {
   background-color: #fd7e14;
