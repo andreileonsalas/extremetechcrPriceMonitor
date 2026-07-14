@@ -170,26 +170,53 @@ async function fetchTextPlaywright(url) {
     });
     // Check whether we hit a CF challenge page.
     const title = await page.title().catch(() => '');
-    const isCFChallenge = title.includes('Just a moment') || title === 'Attention Required! | Cloudflare';
+    const isCFChallenge =
+      title.includes('Just a moment') ||
+      title === 'Attention Required! | Cloudflare' ||
+      title.includes('Verify you are human');
     if (isCFChallenge) {
       // CF challenge completes via a form-POST navigation; wait for it.
-      await page.waitForNavigation({
-        waitUntil: 'domcontentloaded',
-        timeout: 15000,
-      }).catch(() => {});
+      let challengeResolved = false;
+      try {
+        // CF challenges (including Turnstile) typically complete within 10-20 seconds;
+        // 30 seconds provides a comfortable buffer before we give up and return empty.
+        await page.waitForNavigation({
+          waitUntil: 'domcontentloaded',
+          timeout: 30000,
+        });
+        challengeResolved = true;
+      } catch (err) {
+        console.warn(`[fetchText] CF challenge navigation timed out for ${url}: ${err.message}`);
+      }
+      if (!challengeResolved) {
+        // Challenge didn't resolve — return empty so callers can detect the failure.
+        console.warn(`[fetchText] Returning empty string for ${url} because CF challenge was not resolved.`);
+        return '';
+      }
       // At this point cf_clearance is set; re-fetch the URL using the
       // browser's fetch() API so we get the raw XML text.
-      return await page.evaluate(async (targetUrl) => {
-        const res = await fetch(targetUrl);
-        return res.text();
+      const text = await page.evaluate(async (targetUrl) => {
+        try {
+          const res = await fetch(targetUrl);
+          return res.text();
+        } catch (e) {
+          return '';
+        }
       }, url);
+      const snippet = text.slice(0, 300).replace(/\s+/g, ' ');
+      console.log(`[fetchText] CF-resolved fetch for ${url} — ${text.length} bytes. Snippet: ${snippet}`);
+      return text;
     }
     // No challenge: read the response body directly from the navigation response.
     // This avoids the XML viewer's restricted JS context.
-    if (response) {
-      return await response.text();
+    if (!response) {
+      console.warn(`[fetchText] page.goto() returned null response for ${url}. Returning empty string.`);
+      return '';
     }
-    return '';
+    const text = await response.text();
+    const snippet = text.slice(0, 300).replace(/\s+/g, ' ');
+    console.log(`[fetchText] Direct fetch for ${url} — ${text.length} bytes. Snippet: ${snippet}`);
+    return text;
   } finally {
     await page.close();
   }
