@@ -10,6 +10,37 @@
 const SITEMAP_URL = 'https://extremetechcr.com/sitemap.xml';
 
 /**
+ * Alternative sitemap URLs to try when the primary SITEMAP_URL returns 0 product URLs.
+ * Tried in order until one returns results.
+ * Covers both Yoast/Rank Math (/sitemap.xml) and WordPress 5.5+ (/wp-sitemap.xml) layouts.
+ * @type {string[]}
+ */
+const SITEMAP_FALLBACK_URLS = [
+  'https://extremetechcr.com/wp-sitemap.xml',
+  'https://extremetechcr.com/sitemap_index.xml',
+];
+
+/**
+ * Minimum number of product URLs the sitemap is expected to return.
+ * If fewer URLs are found, a CRITICAL warning is logged and fallback discovery is used.
+ * This catches cases where the sitemap is returning a Cloudflare challenge page
+ * or is otherwise broken, rather than silently producing no new product discoveries.
+ * @type {number}
+ */
+const SITEMAP_MIN_EXPECTED_URLS = 100;
+
+/**
+ * Shop/category page URLs to crawl as a fallback when the sitemap returns fewer than
+ * SITEMAP_MIN_EXPECTED_URLS product URLs.  For WooCommerce the shop page at /tienda/
+ * lists all products (sorted newest-first) and is paginated, making it a reliable
+ * secondary discovery source.
+ * @type {string[]}
+ */
+const DISCOVERY_FALLBACK_URLS = [
+  'https://extremetechcr.com/tienda/?orderby=date',
+];
+
+/**
  * When true, the scraper uses plain HTTP requests (axios) instead of a
  * Playwright browser.
  *
@@ -182,6 +213,9 @@ const SELECTOR_PRODUCT_DESCRIPTION = '.woocommerce-product-details__short-descri
 
 module.exports = {
   SITEMAP_URL,
+  SITEMAP_FALLBACK_URLS,
+  SITEMAP_MIN_EXPECTED_URLS,
+  DISCOVERY_FALLBACK_URLS,
   USE_HTTP_FETCHER,
   CONCURRENT_REQUESTS,
   REQUEST_DELAY_MS,
