@@ -146,7 +146,9 @@ function delay(ms) {
  */
 function isCloudflareContent(content) {
   return (
-    content.includes('challenges.cloudflare.com') ||
+    // Use '//challenges.cloudflare.com/' so the check only matches the canonical
+    // Cloudflare challenge hostname (not a subdomain or path-embedded variant).
+    content.includes('//challenges.cloudflare.com/') ||
     content.includes('cf-browser-verification') ||
     content.includes('__cf_chl_f_tk') ||
     content.includes('jschl-answer') ||
@@ -170,11 +172,11 @@ function extractProductUrlsFromHtml(html, baseUrl) {
   const $ = load(html);
   const urls = new Set();
 
-  let base;
+  let base = null;
   try {
     base = new URL(baseUrl);
   } catch {
-    base = { origin: '' };
+    base = null;
   }
 
   $('a[href]').each((_, el) => {
@@ -184,7 +186,7 @@ function extractProductUrlsFromHtml(html, baseUrl) {
     // Resolve relative links to absolute
     try {
       if (!href.startsWith('http')) {
-        href = new URL(href, base.origin || baseUrl).toString();
+        href = new URL(href, base ? base.origin : baseUrl).toString();
       }
     } catch {
       return;
@@ -225,7 +227,12 @@ async function getProductUrlsFromDiscoveryPages(discoveryUrls, maxPagesPerUrl = 
       // WooCommerce paginates as /page/N/ appended to the base URL (strip query
       // string first so page/2/?orderby=date is not doubled).
       const baseWithoutQuery = baseUrl.split('?')[0].replace(/\/?$/, '/');
-      const queryString = baseUrl.includes('?') ? `?${baseUrl.split('?')[1]}` : '';
+      let queryString = '';
+      try {
+        queryString = new URL(baseUrl).search; // e.g. "?orderby=date"
+      } catch {
+        queryString = '';
+      }
       const pageUrl = pageNum === 1 ? baseUrl : `${baseWithoutQuery}page/${pageNum}/${queryString}`;
 
       try {

@@ -49,8 +49,7 @@ async function runSitemapUpdate() {
 
       if (fallbackUrls.length > 0) {
         // Merge sitemap URLs (if any partial results) with fallback, deduplicating.
-        const merged = new Set([...sitemapUrls, ...fallbackUrls]);
-        sitemapUrls = [...merged];
+        sitemapUrls = Array.from(new Set([...sitemapUrls, ...fallbackUrls]));
         discoverySource = `sitemap+discovery-pages (${fallbackUrls.length} from discovery)`;
         console.log(`[DISCOVERY] Discovery fallback complete. Total combined URLs: ${sitemapUrls.length}`);
       } else {

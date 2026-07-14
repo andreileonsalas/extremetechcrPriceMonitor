@@ -28,9 +28,9 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  // Reset browser mock implementations AND clear call history between tests.
-  // mockReset() also clears any pending mockResolvedValueOnce queues, preventing
-  // leftover queue items from a previous test from bleeding into the next one.
+  // Use mockReset() (not clearAllMocks) so that any pending mockResolvedValueOnce
+  // implementations queued by previous tests are flushed. mockReset() clears both
+  // call history AND mock implementations; clearAllMocks() only clears call history.
   browser.fetchText.mockReset();
   browser.fetchPage.mockReset();
 });
