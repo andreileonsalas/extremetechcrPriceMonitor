@@ -29,8 +29,9 @@ afterAll(() => {
 
 beforeEach(() => {
   // Use mockReset() (not clearAllMocks) so that any pending mockResolvedValueOnce
-  // implementations queued by previous tests are flushed. mockReset() clears both
-  // call history AND mock implementations; clearAllMocks() only clears call history.
+  // implementations queued by a previous test are flushed before the next test runs.
+  // mockReset() resets each mock to a bare jest.fn() (no queued return values,
+  // no default implementation), whereas clearAllMocks() only clears call history.
   browser.fetchText.mockReset();
   browser.fetchPage.mockReset();
 });

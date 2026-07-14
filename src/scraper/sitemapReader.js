@@ -207,7 +207,7 @@ function extractProductUrlsFromHtml(html, baseUrl) {
       return;
     }
 
-    // Strip query parameters to normalise the URL
+    // Strip query parameters to normalize the URL
     const clean = href.split('?')[0].replace(/\/?$/, '/');
 
     if (isProductUrl(clean)) {

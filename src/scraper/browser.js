@@ -178,8 +178,8 @@ async function fetchTextPlaywright(url) {
       // CF challenge completes via a form-POST navigation; wait for it.
       let challengeResolved = false;
       try {
-        // CF challenges (including Turnstile) typically complete within 10-20 s;
-        // 30 s provides a comfortable buffer before we give up and return empty.
+        // CF challenges (including Turnstile) typically complete within 10-20 seconds;
+        // 30 seconds provides a comfortable buffer before we give up and return empty.
         await page.waitForNavigation({
           waitUntil: 'domcontentloaded',
           timeout: 30000,
