@@ -145,16 +145,31 @@ function delay(ms) {
  * @returns {boolean}
  */
 function isCloudflareContent(content) {
-  return (
-    // Use '//challenges.cloudflare.com/' so the check only matches the canonical
-    // Cloudflare challenge hostname (not a subdomain or path-embedded variant).
-    content.includes('//challenges.cloudflare.com/') ||
+  // Fast string checks cover the majority of CF challenge variants.
+  if (
     content.includes('cf-browser-verification') ||
     content.includes('__cf_chl_f_tk') ||
     content.includes('jschl-answer') ||
     content.includes('Just a moment...') ||
     (content.includes('cloudflare') && content.includes('Enable JavaScript'))
-  );
+  ) {
+    return true;
+  }
+
+  // Check whether any <script src> resolves to the Cloudflare challenge host.
+  // Using proper URL parsing (new URL) avoids a substring-only host check.
+  try {
+    const $ = load(content);
+    return $('script[src]').toArray().some((el) => {
+      try {
+        return new URL($(el).attr('src') || '').hostname === 'challenges.cloudflare.com';
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
 }
 
 /**
