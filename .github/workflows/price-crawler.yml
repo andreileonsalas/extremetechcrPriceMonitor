@@ -104,6 +104,9 @@ jobs:
         env:
           PRICE_UPDATE_CHUNK_FILE: chunks/chunk-${{ matrix.worker }}.json
           FAIL_ON_NULL_PRICE: ${{ github.event.inputs.fail_on_null_price || 'false' }}
+          MAX_CONCURRENCY: '2'
+          CF_CHALLENGE_TIMEOUT_MS: '60000'
+          REQUEST_JITTER_MS: '1500'
         run: npm run prices
 
       - name: Rename worker database for upload

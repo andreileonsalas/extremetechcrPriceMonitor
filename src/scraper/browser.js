@@ -2,11 +2,43 @@
 
 const { chromium } = require('playwright-extra');
 const stealth = require('puppeteer-extra-plugin-stealth');
-const { REQUEST_TIMEOUT_MS, USE_HTTP_FETCHER } = require('../config');
+const { REQUEST_TIMEOUT_MS, CF_CHALLENGE_TIMEOUT_MS, USE_HTTP_FETCHER } = require('../config');
 const { fetchPageHttp, fetchTextHttp, closeHttpClient } = require('./httpFetcher');
 
 // Apply all stealth patches so Cloudflare's bot detection does not block the browser.
 chromium.use(stealth());
+
+/**
+ * Per-run Playwright/Cloudflare metrics.
+ * Counts are incremented as pages are fetched and reported at the end of the
+ * price-update job to give visibility into challenge rates.
+ */
+const metrics = {
+  /** Total URLs fetched via Playwright (fetchPagePlaywright calls). */
+  playwrightFetchCount: 0,
+  /** Number of fetches where a Cloudflare challenge page was detected. */
+  challengeDetected: 0,
+  /** Challenges that self-resolved (browser navigated to the real page). */
+  challengeResolved: 0,
+  /** Challenges that timed out and could not be resolved. */
+  challengeUnresolved: 0,
+};
+
+/**
+ * Returns a snapshot of the current Playwright/Cloudflare metrics.
+ * @returns {{ playwrightFetchCount: number, challengeDetected: number, challengeResolved: number, challengeUnresolved: number }}
+ */
+function getMetrics() {
+  return { ...metrics };
+}
+
+/** Resets all metrics counters to zero (useful between test runs). */
+function resetMetrics() {
+  metrics.playwrightFetchCount = 0;
+  metrics.challengeDetected = 0;
+  metrics.challengeResolved = 0;
+  metrics.challengeUnresolved = 0;
+}
 
 /** @type {import('playwright-extra').Browser|null} */
 let browserInstance = null;
@@ -114,6 +146,7 @@ async function fetchPagePlaywright(url) {
       finalStatusCode = response.status();
     }
   });
+  metrics.playwrightFetchCount += 1;
   try {
     await page.goto(url, {
       waitUntil: 'domcontentloaded',
@@ -122,14 +155,31 @@ async function fetchPagePlaywright(url) {
     // Detect Cloudflare challenge pages. CF uses a few title variants; check
     // for all known patterns rather than an exact match.
     const title = await page.title().catch(() => '');
-    const isCFChallenge = title.includes('Just a moment') || title === 'Attention Required! | Cloudflare';
+    const isCFChallenge =
+      title.includes('Just a moment') ||
+      title === 'Attention Required! | Cloudflare' ||
+      title.includes('Verify you are human');
     if (isCFChallenge) {
+      metrics.challengeDetected += 1;
       // CF managed challenge auto-solves via JavaScript and issues a POST
-      // redirect.  Wait for the navigation to the real page.
-      await page.waitForNavigation({
-        waitUntil: 'domcontentloaded',
-        timeout: 15000,
-      }).catch(() => {});
+      // redirect.  Wait up to CF_CHALLENGE_TIMEOUT_MS for the real page.
+      let resolved = false;
+      try {
+        await page.waitForNavigation({
+          waitUntil: 'domcontentloaded',
+          timeout: CF_CHALLENGE_TIMEOUT_MS,
+        });
+        resolved = true;
+      } catch (_) {
+        // Navigation did not complete within the timeout — challenge unresolved.
+      }
+      if (resolved) {
+        metrics.challengeResolved += 1;
+        console.log(`[CF] Challenge resolved for ${url} (waited up to ${CF_CHALLENGE_TIMEOUT_MS / 1000}s)`);
+      } else {
+        metrics.challengeUnresolved += 1;
+        console.warn(`[CF] Challenge timed out for ${url} after ${CF_CHALLENGE_TIMEOUT_MS / 1000}s`);
+      }
       // With images/fonts/media blocked we only wait for scripts; a short
       // pause of 500 ms is enough for the page's own JS to hydrate before
       // we snapshot the HTML content.
@@ -175,20 +225,23 @@ async function fetchTextPlaywright(url) {
       title === 'Attention Required! | Cloudflare' ||
       title.includes('Verify you are human');
     if (isCFChallenge) {
+      metrics.challengeDetected += 1;
       // CF challenge completes via a form-POST navigation; wait for it.
       let challengeResolved = false;
       try {
-        // CF challenges (including Turnstile) typically complete within 10-20 seconds;
-        // 30 seconds provides a comfortable buffer before we give up and return empty.
         await page.waitForNavigation({
           waitUntil: 'domcontentloaded',
-          timeout: 30000,
+          timeout: CF_CHALLENGE_TIMEOUT_MS,
         });
         challengeResolved = true;
       } catch (err) {
         console.warn(`[fetchText] CF challenge navigation timed out for ${url}: ${err.message}`);
       }
-      if (!challengeResolved) {
+      if (challengeResolved) {
+        metrics.challengeResolved += 1;
+        console.log(`[fetchText] CF challenge resolved for ${url}`);
+      } else {
+        metrics.challengeUnresolved += 1;
         // Challenge didn't resolve — return empty so callers can detect the failure.
         console.warn(`[fetchText] Returning empty string for ${url} because CF challenge was not resolved.`);
         return '';
@@ -234,4 +287,4 @@ async function closeBrowserPlaywright() {
   }
 }
 
-module.exports = { fetchPage, fetchText, closeBrowser };
+module.exports = { fetchPage, fetchText, closeBrowser, getMetrics, resetMetrics };

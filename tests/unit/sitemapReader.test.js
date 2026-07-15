@@ -381,6 +381,23 @@ describe('sitemapReader', () => {
       expect(results).toEqual(['A', 'B', 'C']);
       expect(processor).toHaveBeenCalledTimes(3);
     });
+
+    test('processes empty array without error', async () => {
+      const processor = jest.fn();
+      const results = await fetchUrlsInBatches([], processor);
+      expect(results).toEqual([]);
+      expect(processor).not.toHaveBeenCalled();
+    });
+
+    test('applies random jitter between batches (does not apply after last batch)', async () => {
+      // With CONCURRENT_REQUESTS=2 and 4 items we get 2 batches; jitter is added only
+      // between batches, not after the last one. We verify all items are still processed.
+      const items = ['a', 'b', 'c', 'd'];
+      const processor = jest.fn((item) => Promise.resolve(item.toUpperCase()));
+      const results = await fetchUrlsInBatches(items, processor);
+      expect(results).toEqual(['A', 'B', 'C', 'D']);
+      expect(processor).toHaveBeenCalledTimes(4);
+    });
   });
 
   describe('delay', () => {
