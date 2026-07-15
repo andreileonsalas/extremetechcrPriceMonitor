@@ -90,7 +90,7 @@ The scraper uses Playwright stealth to bypass Cloudflare's managed challenge. If
 At the end of each run the job logs a `[METRICS]` summary line:
 ```
 [METRICS] URLs total: 3000 | Processed: 2950 | CF skipped: 12 | Null price: 5
-[METRICS] Playwright fetches: 3000 | CF challenge detected: 18 | CF challenge resolved: 6 | CF challenge unresolved: 12
+[METRICS] Playwright fetch attempts: 3000 | CF challenge detected: 18 | CF challenge resolved: 6 | CF challenge unresolved: 12
 ```
 
 ## License

@@ -391,12 +391,20 @@ describe('sitemapReader', () => {
 
     test('applies random jitter between batches (does not apply after last batch)', async () => {
       // With CONCURRENT_REQUESTS=2 and 4 items we get 2 batches; jitter is added only
-      // between batches, not after the last one. We verify all items are still processed.
-      const items = ['a', 'b', 'c', 'd'];
-      const processor = jest.fn((item) => Promise.resolve(item.toUpperCase()));
-      const results = await fetchUrlsInBatches(items, processor);
-      expect(results).toEqual(['A', 'B', 'C', 'D']);
-      expect(processor).toHaveBeenCalledTimes(4);
+      // between batches, not after the last one. We verify all items are still processed
+      // and that Math.random was called exactly once (for the single inter-batch gap).
+      const mathRandomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+      try {
+        const items = ['a', 'b', 'c', 'd'];
+        const processor = jest.fn((item) => Promise.resolve(item.toUpperCase()));
+        const results = await fetchUrlsInBatches(items, processor);
+        expect(results).toEqual(['A', 'B', 'C', 'D']);
+        expect(processor).toHaveBeenCalledTimes(4);
+        // Math.random should have been called once for the single inter-batch jitter
+        expect(mathRandomSpy).toHaveBeenCalled();
+      } finally {
+        mathRandomSpy.mockRestore();
+      }
     });
   });
 

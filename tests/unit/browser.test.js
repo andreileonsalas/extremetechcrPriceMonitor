@@ -31,7 +31,7 @@ describe('browser metrics', () => {
 
   test('getMetrics returns zeroed counters after resetMetrics', () => {
     const m = getMetrics();
-    expect(m.playwrightFetchCount).toBe(0);
+    expect(m.playwrightFetchAttemptCount).toBe(0);
     expect(m.challengeDetected).toBe(0);
     expect(m.challengeResolved).toBe(0);
     expect(m.challengeUnresolved).toBe(0);
@@ -41,7 +41,7 @@ describe('browser metrics', () => {
     const snap1 = getMetrics();
     // Resetting should not affect the already-returned snapshot
     resetMetrics();
-    expect(snap1.playwrightFetchCount).toBe(0);
+    expect(snap1.playwrightFetchAttemptCount).toBe(0);
   });
 
   test('resetMetrics sets all counters back to zero', () => {
@@ -49,7 +49,7 @@ describe('browser metrics', () => {
     resetMetrics();
     resetMetrics();
     const m = getMetrics();
-    expect(m.playwrightFetchCount).toBe(0);
+    expect(m.playwrightFetchAttemptCount).toBe(0);
     expect(m.challengeDetected).toBe(0);
     expect(m.challengeResolved).toBe(0);
     expect(m.challengeUnresolved).toBe(0);

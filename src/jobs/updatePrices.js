@@ -204,7 +204,7 @@ async function runPriceUpdate() {
   );
   if (!USE_HTTP_FETCHER) {
     console.log(
-      `[METRICS] Playwright fetches: ${bMetrics.playwrightFetchCount} | ` +
+      `[METRICS] Playwright fetch attempts: ${bMetrics.playwrightFetchAttemptCount} | ` +
       `CF challenge detected: ${bMetrics.challengeDetected} | ` +
       `CF challenge resolved: ${bMetrics.challengeResolved} | ` +
       `CF challenge unresolved: ${bMetrics.challengeUnresolved}`

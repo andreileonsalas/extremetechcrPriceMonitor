@@ -14,8 +14,8 @@ chromium.use(stealth());
  * price-update job to give visibility into challenge rates.
  */
 const metrics = {
-  /** Total URLs fetched via Playwright (fetchPagePlaywright calls). */
-  playwrightFetchCount: 0,
+  /** Total Playwright fetch attempts (fetchPagePlaywright + fetchTextPlaywright calls, including failures). */
+  playwrightFetchAttemptCount: 0,
   /** Number of fetches where a Cloudflare challenge page was detected. */
   challengeDetected: 0,
   /** Challenges that self-resolved (browser navigated to the real page). */
@@ -26,7 +26,7 @@ const metrics = {
 
 /**
  * Returns a snapshot of the current Playwright/Cloudflare metrics.
- * @returns {{ playwrightFetchCount: number, challengeDetected: number, challengeResolved: number, challengeUnresolved: number }}
+ * @returns {{ playwrightFetchAttemptCount: number, challengeDetected: number, challengeResolved: number, challengeUnresolved: number }}
  */
 function getMetrics() {
   return { ...metrics };
@@ -34,7 +34,7 @@ function getMetrics() {
 
 /** Resets all metrics counters to zero (useful between test runs). */
 function resetMetrics() {
-  metrics.playwrightFetchCount = 0;
+  metrics.playwrightFetchAttemptCount = 0;
   metrics.challengeDetected = 0;
   metrics.challengeResolved = 0;
   metrics.challengeUnresolved = 0;
@@ -146,7 +146,7 @@ async function fetchPagePlaywright(url) {
       finalStatusCode = response.status();
     }
   });
-  metrics.playwrightFetchCount += 1;
+  metrics.playwrightFetchAttemptCount += 1;
   try {
     await page.goto(url, {
       waitUntil: 'domcontentloaded',
@@ -213,6 +213,7 @@ async function fetchPagePlaywright(url) {
 async function fetchTextPlaywright(url) {
   const context = await getBrowserContext();
   const page = await context.newPage();
+  metrics.playwrightFetchAttemptCount += 1;
   try {
     const response = await page.goto(url, {
       waitUntil: 'domcontentloaded',
