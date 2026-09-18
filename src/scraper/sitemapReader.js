@@ -9,6 +9,7 @@ const {
   SKIP_URL_PATTERNS,
   CONCURRENT_REQUESTS,
   REQUEST_DELAY_MS,
+  REQUEST_JITTER_MS,
 } = require('../config');
 
 /**
@@ -114,7 +115,8 @@ async function fetchUrlsInBatches(items, processor) {
     const batchResults = await Promise.all(batch.map(processor));
     results.push(...batchResults);
     if (i + CONCURRENT_REQUESTS < items.length) {
-      await delay(REQUEST_DELAY_MS);
+      const jitter = Math.floor(Math.random() * REQUEST_JITTER_MS);
+      await delay(REQUEST_DELAY_MS + jitter);
     }
   }
   return results;

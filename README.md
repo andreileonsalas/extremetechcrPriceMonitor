@@ -63,8 +63,14 @@ npm run prices
 All configuration is in `src/config.js`. Key settings:
 
 - `SITEMAP_URL` - The WooCommerce sitemap URL
-- `CONCURRENT_REQUESTS` - Max parallel browser pages per batch (default: 5)
-- `REQUEST_DELAY_MS` - Delay between batches in ms (default: 500)
+- `CONCURRENT_REQUESTS` - Max parallel browser pages per batch.  
+  Overridable via `MAX_CONCURRENCY` env var (default **2** for safer behavior on GitHub Actions datacenter IPs).
+- `REQUEST_DELAY_MS` - Base delay between batches in ms (default: 500)
+- `REQUEST_JITTER_MS` - Max random extra delay added to each inter-batch pause, reducing predictable timing patterns.  
+  Overridable via `REQUEST_JITTER_MS` env var (default: 1500).
+- `CF_CHALLENGE_TIMEOUT_MS` - How long (ms) to wait for a Cloudflare challenge page to self-resolve before giving up.  
+  Overridable via `CF_CHALLENGE_TIMEOUT_MS` env var (default: **60000** = 60 s).  
+  GitHub Actions datacenter IPs may need the full 60 s; residential IPs typically solve in 5–20 s.
 - `MAX_URLS_PER_RUN` - Products scraped per daily run, stale-first (default: 10000)
 - `USE_HTTP_FETCHER` - **Always false** — the site uses Cloudflare managed challenge; plain HTTP is permanently blocked regardless of headers or rate. Only a real Chromium browser (Playwright + stealth) can pass the JS challenge.
 - `NULL_PRICE_RETRY_ATTEMPTS` - Retries when a price comes back null (default: 2)
@@ -72,6 +78,20 @@ All configuration is in `src/config.js`. Key settings:
 - `NULL_PRICE_FAIL_THRESHOLD` - Max null prices before job fails (default: 50)
 - `DB_PATH` - SQLite database path
 - `DB_ZIP_PATH` - Output ZIP path for GitHub Pages
+
+### Cloudflare challenge tuning
+
+The scraper uses Playwright stealth to bypass Cloudflare's managed challenge. If you see `[CLOUDFLARE] ... Challenge not resolved` in the logs, try:
+
+1. **Reduce concurrency** — set `MAX_CONCURRENCY=1` or `MAX_CONCURRENCY=2` (already the default).
+2. **Increase challenge timeout** — set `CF_CHALLENGE_TIMEOUT_MS=90000` to give CF 90 s to solve.
+3. **Run locally** — a residential IP bypasses CF much faster (~5 s) than a GitHub Actions datacenter IP (~20–60 s). The scraper is fully functional locally with default settings.
+
+At the end of each run the job logs a `[METRICS]` summary line:
+```
+[METRICS] URLs total: 3000 | Processed: 2950 | CF skipped: 12 | Null price: 5
+[METRICS] Playwright fetch attempts: 3000 | CF challenge detected: 18 | CF challenge resolved: 6 | CF challenge unresolved: 12
+```
 
 ## License
 
