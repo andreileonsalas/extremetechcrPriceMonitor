@@ -64,9 +64,13 @@ const USE_HTTP_FETCHER = false;
  * With resource-blocking enabled each page loads in ~800–1 500 ms, so
  * 5 concurrent pages processes ~5 products every ~1.5 s + REQUEST_DELAY_MS.
  * Raising this above 5 gives diminishing returns and increases memory use.
+ *
+ * Overridable at runtime via the MAX_CONCURRENCY environment variable.
+ * Defaults to 2 for safer behavior on GitHub Actions (datacenter IPs are more
+ * likely to trigger Cloudflare challenges under high concurrency).
  * @type {number}
  */
-const CONCURRENT_REQUESTS = 5;
+const CONCURRENT_REQUESTS = parseInt(process.env.MAX_CONCURRENCY || '2', 10);
 
 /**
  * Delay in milliseconds between request batches.
@@ -77,8 +81,27 @@ const CONCURRENT_REQUESTS = 5;
  */
 const REQUEST_DELAY_MS = 500;
 
+/**
+ * Maximum random extra delay (jitter) added to REQUEST_DELAY_MS between batches.
+ * Randomising the inter-batch gap makes the traffic pattern less predictable
+ * and reduces the chance of Cloudflare flagging regular request intervals.
+ * Actual delay per batch = REQUEST_DELAY_MS + random(0, REQUEST_JITTER_MS).
+ * Set to 0 to disable jitter.
+ * @type {number}
+ */
+const REQUEST_JITTER_MS = parseInt(process.env.REQUEST_JITTER_MS || '1500', 10);
+
 /** @type {number} HTTP request timeout in milliseconds */
 const REQUEST_TIMEOUT_MS = 15000;
+
+/**
+ * How long (in ms) to wait for a Cloudflare challenge page to self-resolve
+ * before giving up.  CF managed challenges auto-solve via JS in 5–20 s on
+ * residential IPs; GitHub Actions datacenter IPs may need more time.
+ * Overridable via the CF_CHALLENGE_TIMEOUT_MS environment variable.
+ * @type {number}
+ */
+const CF_CHALLENGE_TIMEOUT_MS = parseInt(process.env.CF_CHALLENGE_TIMEOUT_MS || '60000', 10);
 
 /**
  * Maximum number of URLs to process per price-update run (stale-first).
@@ -219,7 +242,9 @@ module.exports = {
   USE_HTTP_FETCHER,
   CONCURRENT_REQUESTS,
   REQUEST_DELAY_MS,
+  REQUEST_JITTER_MS,
   REQUEST_TIMEOUT_MS,
+  CF_CHALLENGE_TIMEOUT_MS,
   MAX_URLS_PER_RUN,
   WORKER_COUNT,
   NULL_PRICE_RETRY_ATTEMPTS,

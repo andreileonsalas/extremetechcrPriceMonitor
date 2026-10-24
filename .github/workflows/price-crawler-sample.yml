@@ -51,6 +51,9 @@ jobs:
               github.event.inputs.urls != '' && github.event.inputs.urls
               || 'https://extremetechcr.com/producto/lenovo-ideapad-slim-3-ryzen-7-7735hs-16gb-cosmic-blue-83k700b8gj/,https://extremetechcr.com/producto/intel-pentium-gold-g6405/,https://extremetechcr.com/producto/msi-pro-mp225v-22-100hz-9s6-3pe0cm-020/,https://extremetechcr.com/producto/razer-kraken-kitty-edition-v2-pro-rosa/,https://extremetechcr.com/producto/laptop-gaming-asus-tuf-f15/'
             }}
+          MAX_CONCURRENCY: '2'
+          CF_CHALLENGE_TIMEOUT_MS: '60000'
+          REQUEST_JITTER_MS: '1500'
         run: npm run prices
 
       - name: Commit and push database ZIP
