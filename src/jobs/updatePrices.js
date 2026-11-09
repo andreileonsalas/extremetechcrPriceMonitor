@@ -33,8 +33,8 @@ const {
   closeDatabase,
 } = require('../database/db');
 const { fetchUrlsInBatches, delay } = require('../scraper/sitemapReader');
-const { closeBrowser } = require('../scraper/browser');
-const { MAX_URLS_PER_RUN, NULL_PRICE_RETRY_ATTEMPTS, NULL_PRICE_RETRY_DELAY_MS, NULL_PRICE_RETRY_BACKOFF_MULTIPLIER, NULL_PRICE_FAIL_THRESHOLD } = require('../config');
+const { closeBrowser, getMetrics } = require('../scraper/browser');
+const { MAX_URLS_PER_RUN, NULL_PRICE_RETRY_ATTEMPTS, NULL_PRICE_RETRY_DELAY_MS, NULL_PRICE_RETRY_BACKOFF_MULTIPLIER, NULL_PRICE_FAIL_THRESHOLD, USE_HTTP_FETCHER } = require('../config');
 
 /** How often (in products processed) to export an intermediate db.zip snapshot. */
 const EXPORT_INTERVAL = 50;
@@ -44,6 +44,9 @@ let processedCount = 0;
 
 /** Running count of products whose price could not be determined in this run. */
 let nullPriceCount = 0;
+
+/** Running count of URLs skipped due to unresolved Cloudflare challenges. */
+let cloudflareSkippedCount = 0;
 
 /**
  * Processes a single product URL: scrapes it and updates the database.
@@ -100,6 +103,7 @@ async function processProductUrl(url) {
 
     if (data.isCloudflarePage) {
       console.warn(`  [CLOUDFLARE] ${url} | Challenge not resolved after ${NULL_PRICE_RETRY_ATTEMPTS} retries, skipping.`);
+      cloudflareSkippedCount += 1;
       return;
     }
 
@@ -189,6 +193,23 @@ async function runPriceUpdate() {
   await closeBrowser();
   closeDatabase();
   console.log(`Price update job complete. Processed ${processedCount} products.`);
+
+  // Report Cloudflare / scrape metrics for observability.
+  const bMetrics = getMetrics();
+  console.log(
+    `[METRICS] URLs total: ${urls.length} | ` +
+    `Processed: ${processedCount} | ` +
+    `CF skipped: ${cloudflareSkippedCount} | ` +
+    `Null price: ${nullPriceCount}`
+  );
+  if (!USE_HTTP_FETCHER) {
+    console.log(
+      `[METRICS] Playwright fetch attempts: ${bMetrics.playwrightFetchAttemptCount} | ` +
+      `CF challenge detected: ${bMetrics.challengeDetected} | ` +
+      `CF challenge resolved: ${bMetrics.challengeResolved} | ` +
+      `CF challenge unresolved: ${bMetrics.challengeUnresolved}`
+    );
+  }
 
   if (nullPriceCount > 0) {
     console.warn(`[NULL PRICES] ${nullPriceCount} product(s) had a null price in this run.`);
